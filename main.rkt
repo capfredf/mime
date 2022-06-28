@@ -56,8 +56,8 @@
      (make-arrow (parse-type #'arg-type)
                  (parse-type #'ret-type))]))
 
-(define (type-check e env)
-  (syntax-parse e
+(define (type-check term env)
+  (syntax-parse term
     #:datum-literals (:)
     [var:id (lookup-env env #'var)]
     [(lambda (x:id : ty:id) body:expr) (make-arrow (parse-type #'ty)
