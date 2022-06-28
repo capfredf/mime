@@ -61,6 +61,13 @@
        (make-poly (syntax-e #'var) (parse-type #'body))]
       [(-> arg-type ret-type) (make-arrow (parse-type #'arg-type) (parse-type #'ret-type))]))
 
+  (define (typecheck term env)
+    (syntax-parse term
+      [var:id
+       (lookup-env env #'var)]
+      [(lambda (x) body)
+       ]))
+
   (module+ test
     (require rackunit)
     (check-equal? (parse-type #'(-> Int Int)) (make-arrow Int Int))
