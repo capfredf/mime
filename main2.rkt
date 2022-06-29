@@ -1,6 +1,7 @@
 #lang racket/base
 (module typed-me typed/racket/base
   (require racket/match)
+  (require racket/set)
 
   (define-type Type (Union PolyType MonoType))
   (define-type Env (Listof (Pairof Identifier Type)))
@@ -25,6 +26,7 @@
 
   (struct mono-type () #:transparent #:type-name MonoType)
   (struct free-var mono-type ([n : Symbol]) #:transparent
+    #:type-name FreeVar
     #:property prop:equal+hash
     [list (lambda (me other _)
             (free-var? other))
@@ -66,6 +68,46 @@
         [o o]))
     (subst arr n ty))
 
+  (define-type Sub (-> MonoType MonoType))
+
+  (define (free-vars [ty : MonoType]) : (Setof Symbol)
+    (match ty
+      [(struct arrow [arg-ty ret-ty])
+       (set-union (free-vars ty)
+                  (free-vars ret-ty))]
+      [(struct free-var [m])
+       (set m)]
+      [o (set)]))
+
+  (define (free-in? [t1 : MonoType] [t2  : FreeVar])
+    (set-member? (free-vars t1) (free-var-n t2)))
+
+  (define-syntax-rule (--> X T)
+    (lambda ([x : MonoType])
+      (if (and (free-var? x) (equal? (free-var-n x) (free-var-n X)))
+          T
+          x)))
+
+  (define (unify [t1 : MonoType] [t2 : MonoType]) : Sub
+    (cond
+      [(equal? t1 t2)
+       (lambda ([x : MonoType]) x)]
+      [(and (free-var? t1)
+            (not (free-in? t2 t1)))
+       (--> t1 t2)]
+      [(and (free-var? t2)
+            (not (free-in? t1 t2)))
+       (--> t2 t1)]
+      [(and (arrow? t1) (arrow? t2))
+       (match-define (struct arrow [arg-ty1 ret-ty1]) t1)
+       (match-define (struct arrow [arg-ty2 ret-ty2]) t2)
+       (define s1 (unify arg-ty1 ret-ty2))
+       (define s2 (unify ret-ty1 ret-ty2))
+       (compose s2 s1)]
+      [else
+       (error 'hi "unify failed")]))
+
+
   (: base-type (-> Symbol (Option MonoType)))
   (define (base-type a)
     (match a
@@ -77,6 +119,7 @@
            syntax/parse
            racket/match
            racket/format)
+
 
   (define (parse-type ty-term)
     ;; (define (bound? v)
