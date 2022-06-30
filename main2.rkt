@@ -2,6 +2,7 @@
 (module typed-me typed/racket/base
   (require racket/match)
   (require racket/set)
+  (require racket/hash)
   (require typed/rackunit)
 
   (define-type Type (Union PolyType MonoType))
@@ -56,20 +57,21 @@
         arr))
 
 
+  (define (subst [input : MonoType] [n : Symbol] [ty : MonoType]) : MonoType
+    (match input
+      [(struct arrow [arg-ty ret-ty])
+       (make-arrow (subst arg-ty n ty)
+                   (subst ret-ty n ty))]
+      [(struct free-var [m])
+       #:when (equal? n m)
+       ty]
+      [o o]))
+
   (define (forall-E [poly-arr : PolyType] [ty : MonoType]) : Type
     (match-define (struct poly-type [n (? arrow? arr)]) poly-arr)
-    (define (subst [input : MonoType] [n : Symbol] [ty : MonoType]) : MonoType
-      (match input
-        [(struct arrow [arg-ty ret-ty])
-         (make-arrow (subst arg-ty n ty)
-                     (subst ret-ty n ty))]
-        [(struct free-var [m])
-         #:when (equal? n m)
-         ty]
-        [o o]))
-    (subst arr n ty))
+      (subst arr n ty))
 
-  (define-type Sub (-> MonoType MonoType))
+  (define-type Sub (Immutable-HashTable MonoType MonoType))
 
   (define (free-vars [ty : MonoType]) : (Setof Symbol)
     (match ty
@@ -84,15 +86,18 @@
     (set-member? (free-vars t1) (free-var-n t2)))
 
   (define-syntax-rule (--> X T)
-    (lambda ([x : MonoType])
-      (if (and (free-var? x) (equal? (free-var-n x) (free-var-n X)))
-          T
-          x)))
+    (make-immutable-hash (list (cons X T))))
+
+  (define (sub-compose [s1 : Sub] [s2 : Sub]) : Sub
+    (hash-union s1 s2))
+
+  (define (call-sub [sub : Sub] [arg : MonoType]) : MonoType
+    (hash-ref sub arg (lambda () arg)))
 
   (define (unify [t1 : MonoType] [t2 : MonoType]) : Sub
     (cond
       [(equal? t1 t2)
-       (lambda ([x : MonoType]) x)]
+       (make-immutable-hash)]
       [(and (free-var? t1)
             (not (free-in? t2 t1)))
        (--> t1 t2)]
@@ -104,7 +109,7 @@
        (match-define (struct arrow [arg-ty2 ret-ty2]) t2)
        (define s1 (unify arg-ty1 ret-ty2))
        (define s2 (unify ret-ty1 ret-ty2))
-       (compose s2 s1)]
+       (sub-compose s2 s1)]
       [else
        (error 'hi "unify failed")]))
 
@@ -115,23 +120,34 @@
       ['Int Int]
       [_ #f]))
 
+  (: subst-env (-> Env Sub Env))
+  (define (subst-env env sub)
+    (for/list ([ele (in-list env)])
+      (match-define (cons x v) ele)
+      (cons x (if (poly-type? v)
+                  v
+                  (call-sub sub v)))))
+
   (module+ test
     (check-equal? (let ([s (unify (free-var 'x) Int)])
-                    (s (free-var 'x)))
+                    (call-sub s (free-var 'x)))
                   Int)
     (check-equal? (let ([s (unify Int (free-var 'x))])
-                    (s (free-var 'x)))
+                    (call-sub s (free-var 'x)))
                   Int)
     (check-equal? (let ([s (unify (make-arrow (free-var 'x) (free-var 'y))
                                   (make-arrow Int Int))])
-                    (cons (s (free-var 'x)) (s (free-var 'y)) ))
+                    (cons (call-sub s (free-var 'x)) (call-sub s (free-var 'y)) ))
                   (cons Int Int))))
 
 (module parser racket/base
   (require (submod ".." typed-me)
            syntax/parse
            racket/match
+           racket/function
            racket/format)
+
+  (provide (all-defined-out))
 
 
   (define (parse-type ty-term)
@@ -140,7 +156,7 @@
 
     (syntax-parse ty-term
       #:datum-literals (-> forall)
-      [identifier:id
+      [identfiier:id
        #:do [(define rr (base-type (syntax-e #'identifier)))]
        #:when rr
        rr]
@@ -151,50 +167,71 @@
        (make-poly (syntax-e #'var) (parse-type #'body))]
       [(-> arg-type ret-type) (make-arrow (parse-type #'arg-type) (parse-type #'ret-type))]))
 
-  (define (typecheck term env)
+  (define (W-alg term env)
     (syntax-parse term
       #:literals (lambda let)
       [var:id
-       (lookup-env env #'var)]
+       (values (make-immutable-hash)
+               (match (lookup-env env #'var)
+                 [(struct poly-type [n body])
+                  (subst body n (fresh-free-var!))]
+                 [t t]))]
       [n:nat
-       Int]
+       (values (make-immutable-hash) Int)]
       [(lambda (x) body)
-       (define ty (fresh-free-var!))
-       (make-arrow ty (typecheck #'body (extend-env env #'x ty)))]
+       (define ty^ (fresh-free-var!))
+       (define-values (s1 ty*) (W-alg #'body (extend-env env #'x ty^)))
+       (values s1 (make-arrow (call-sub s1 ty^) ty*))]
       [(rator rand)
-       (define given-arg-ty (typecheck #'rand env))
-       (match (typecheck #'rator env)
+       (define-values (s1 t1) (W-alg #'rator env))
+       (define-values (s2 t2) (W-alg #'rand (subst-env env s1)))
+       (match t1
          [(struct arrow [expected-arg-ty ret-ty])
+          (define new-tvar (fresh-free-var!))
+          (define v (unify (call-sub s2 t1) (make-arrow t2 (fresh-free-var!))))
+          (values (sub-compose v (sub-compose s2 s1))
+                  (call-sub v new-tvar))
+          #;
           (if (type-eq? expected-arg-ty ret-ty)
               ret-ty
               (error 'hi (~a "expected: " expected-arg-ty
                              "~n"
                              "given: " given-arg-ty)))]
+         #;
          [(and (? poly-type? f-ty))
           (arrow-ret-type (forall-E f-ty given-arg-ty))]
          [_ (error 'hi (~a "not a function:" (syntax-e #'rator)))])]
       [(let ([var rhs])
          body)
-       (define ty (match (typecheck #'rhs env)
-                    [(? arrow? (app forall-I res))
-                     res]
-                    [t t]))
-       (typecheck #'body (extend-env env #'var ty))]))
+       (define-values (s1 t1) (W-alg #'rhs env))
+       (define env^ (subst-env env s1))
+       (define-values (s2 t2) (W-alg #'body (extend-env env^
+                                                        #'var
+                                                        (forall-I t1))))
+       (values (sub-compose s2 s1) t2)])))
 
-  (module+ test
-    (require rackunit)
-    (check-equal? (parse-type #'(-> Int Int)) (make-arrow Int Int))
-    (check-equal? (parse-type #'(-> a a)) (make-arrow (free-var 'a) (free-var 'a)))
-    (check-equal? (parse-type #'(forall (a) (-> a a)))
-                  (make-poly 'a (make-arrow (free-var 'a) (free-var 'a))))
-    (check-equal? (typecheck #'(lambda (x) x) (new-env))
-                  (make-arrow (free-var 'a)
-                              (free-var 'a)))
-    (check-equal? (typecheck #'(let ([id (lambda (x) x)])
-                                 (id 10))
-                             (new-env))
-                  Int)
-    (check-equal? (typecheck #'(let ([id (lambda (x) x)])
-                                 (id (id 10)))
-                             (new-env))
-                  Int)))
+(require 'typed-me)
+(require 'parser)
+
+(module+ test
+  (require rackunit)
+  (check-equal? (parse-type #'(-> Int Int)) (make-arrow Int Int))
+  (check-equal? (parse-type #'(-> a a)) (make-arrow (free-var 'a) (free-var 'a)))
+  (check-equal? (parse-type #'(forall (a) (-> a a)))
+                (make-poly 'a (make-arrow (free-var 'a) (free-var 'a))))
+  (define-syntax-rule (tc a t^)
+    (begin
+      (define-values (s t) a)
+      (check-equal? t t^)))
+  (tc (W-alg #'(lambda (x) x) (new-env))
+      (make-arrow (free-var 'a)
+                  (free-var 'a)))
+  (tc (W-alg #'(let ([id (lambda (x) x)])
+                 (id 10))
+             (new-env))
+      Int)
+  #;
+  (tc (W-alg #'(let ([id (lambda (x) x)])
+                 (id (id 10)))
+             (new-env))
+      Int))
