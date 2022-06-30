@@ -2,6 +2,7 @@
 (module typed-me typed/racket/base
   (require racket/match)
   (require racket/set)
+  (require typed/rackunit)
 
   (define-type Type (Union PolyType MonoType))
   (define-type Env (Listof (Pairof Identifier Type)))
@@ -112,7 +113,19 @@
   (define (base-type a)
     (match a
       ['Int Int]
-      [_ #f])))
+      [_ #f]))
+
+  (module+ test
+    (check-equal? (let ([s (unify (free-var 'x) Int)])
+                    (s (free-var 'x)))
+                  Int)
+    (check-equal? (let ([s (unify Int (free-var 'x))])
+                    (s (free-var 'x)))
+                  Int)
+    (check-equal? (let ([s (unify (make-arrow (free-var 'x) (free-var 'y))
+                                  (make-arrow Int Int))])
+                    (cons (s (free-var 'x)) (s (free-var 'y)) ))
+                  (cons Int Int))))
 
 (module parser racket/base
   (require (submod ".." typed-me)
