@@ -156,7 +156,7 @@
 
     (syntax-parse ty-term
       #:datum-literals (-> forall)
-      [identfiier:id
+      [identifier:id
        #:do [(define rr (base-type (syntax-e #'identifier)))]
        #:when rr
        rr]
@@ -221,7 +221,7 @@
                 (make-poly 'a (make-arrow (free-var 'a) (free-var 'a))))
   (define-syntax-rule (tc a t^)
     (begin
-      (define-values (s t) a)
+      (define-values (s t) a);;
       (check-equal? t t^)))
   (tc (W-alg #'(lambda (x) x) (new-env))
       (make-arrow (free-var 'a)
@@ -230,7 +230,6 @@
                  (id 10))
              (new-env))
       Int)
-  #;
   (tc (W-alg #'(let ([id (lambda (x) x)])
                  (id (id 10)))
              (new-env))
