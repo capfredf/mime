@@ -29,7 +29,8 @@
   (struct mono-type () #:transparent #:type-name MonoType)
   (struct free-var mono-type ([n : Symbol]) #:transparent
     #:type-name FreeVar
-    #:property prop:equal+hash
+    ;; #:property prop:equal+hash
+    #;
     [list (lambda (me other _)
             (free-var? other))
           (lambda (me f)
@@ -94,24 +95,56 @@
   (define (call-sub [sub : Sub] [arg : MonoType]) : MonoType
     (hash-ref sub arg (lambda () arg)))
 
+  (define-type Constraint (Pairof MonoType MonoType))
+
+  (define (identity-sub) : Sub
+    (make-immutable-hash))
+
   (define (unify [t1 : MonoType] [t2 : MonoType]) : Sub
-    (cond
-      [(equal? t1 t2)
-       (make-immutable-hash)]
-      [(and (free-var? t1)
-            (not (free-in? t2 t1)))
-       (--> t1 t2)]
-      [(and (free-var? t2)
-            (not (free-in? t1 t2)))
-       (--> t2 t1)]
-      [(and (arrow? t1) (arrow? t2))
-       (match-define (struct arrow [arg-ty1 ret-ty1]) t1)
-       (match-define (struct arrow [arg-ty2 ret-ty2]) t2)
-       (define s1 (unify arg-ty1 ret-ty2))
-       (define s2 (unify ret-ty1 ret-ty2))
-       (sub-compose s2 s1)]
-      [else
-       (error 'hi "unify failed")]))
+
+    (define (subst-contraint-li [cli : (Listof Constraint)]
+                                        [var : FreeVar]
+                                        [src : MonoType])  : (Listof Constraint)
+
+      (define (sub [tgt : MonoType]) : MonoType
+        (subst tgt (free-var-n var) src))
+
+      (for/list ([i (in-list cli)])
+        (cons (sub (car i))
+              (sub (cdr i)))))
+
+    (define res : Sub
+      (let loop ([cli : (Listof Constraint) (list (cons t1 t2))])
+        (cond
+          [(null? cli) (identity-sub)]
+          [else
+           (match-define (cons t1 t2) (car cli))
+           (cond
+             [(equal? t1 t2)
+              (identity-sub)]
+             [(and (free-var? t1)
+                   (not (free-in? t2 t1)))
+              (hash-union (--> t1 t2)
+                          (loop (subst-contraint-li (cdr cli) t1 t2)))]
+             [(and (free-var? t2)
+                   (not (free-in? t1 t2)))
+              (hash-union (--> t2 t1)
+                          (loop (subst-contraint-li (cdr cli) t2 t1)))]
+             [(and (arrow? t1) (arrow? t2))
+              (match-define (struct arrow [arg-ty1 ret-ty1]) t1)
+              (match-define (struct arrow [arg-ty2 ret-ty2]) t2)
+              (loop (append (list (cons arg-ty1 arg-ty2)
+                                  (cons ret-ty1 ret-ty2))
+                            (cdr cli)))]
+             [else
+              (error 'hi "unify failed")])])))
+
+    (for/fold : Sub ([acc : Sub res])
+        ([(var1 rhs) (in-hash res)])
+      (if (free-var? var1)
+          (for/hash : Sub ([(k v) (in-hash res)])
+            (values k (subst v (free-var-n var1) rhs)))
+          res)))
 
 
   (: base-type (-> Symbol (Option MonoType)))
@@ -119,6 +152,7 @@
     (match a
       ['Int Int]
       [_ #f]))
+
 
   (: subst-env (-> Env Sub Env))
   (define (subst-env env sub)
@@ -137,6 +171,10 @@
                   Int)
     (check-equal? (let ([s (unify (make-arrow (free-var 'x) (free-var 'y))
                                   (make-arrow Int Int))])
+                    (cons (call-sub s (free-var 'x)) (call-sub s (free-var 'y)) ))
+                  (cons Int Int))
+    (check-equal? (let ([s (unify (make-arrow (free-var 'x) (free-var 'x))
+                                  (make-arrow Int (free-var 'y)))])
                     (cons (call-sub s (free-var 'x)) (call-sub s (free-var 'y)) ))
                   (cons Int Int))))
 
@@ -188,7 +226,7 @@
        (match t1
          [(struct arrow [expected-arg-ty ret-ty])
           (define new-tvar (fresh-free-var!))
-          (define v (unify (call-sub s2 t1) (make-arrow t2 (fresh-free-var!))))
+          (define v (unify (call-sub s2 t1) (make-arrow t2 new-tvar)))
           (values (sub-compose v (sub-compose s2 s1))
                   (call-sub v new-tvar))
           #;
@@ -215,6 +253,7 @@
 
 (module+ test
   (require rackunit)
+  (require racket/match)
   (check-equal? (parse-type #'(-> Int Int)) (make-arrow Int Int))
   (check-equal? (parse-type #'(-> a a)) (make-arrow (free-var 'a) (free-var 'a)))
   (check-equal? (parse-type #'(forall (a) (-> a a)))
@@ -223,13 +262,31 @@
     (begin
       (define-values (s t) a);;
       (check-equal? t t^)))
-  (tc (W-alg #'(lambda (x) x) (new-env))
-      (make-arrow (free-var 'a)
-                  (free-var 'a)))
+
+  (define (alpha-eq? t1 t2)
+    (match* (t1 t2)
+      [((? free-var?) (? free-var?)) #t]
+      [((? poly-type?) (? poly-type?))
+       (alpha-eq? (poly-type-body t1)
+                  (poly-type-body t2))]
+      [((? arrow?) (? arrow?))
+       (and (alpha-eq? (arrow-arg-type t1)
+                       (arrow-arg-type t2))
+            (alpha-eq? (arrow-ret-type t1)
+                       (arrow-ret-type t2)))]
+      [((app base-type a) (app base-type b))
+       (and (equal? a b) a b)]))
+
+  (check-true (alpha-eq? (let-values ([(_ t) (W-alg #'(lambda (x) x) (new-env))])
+                           t)
+                         (make-arrow (free-var 'a)
+                                     (free-var 'a))))
+
   (tc (W-alg #'(let ([id (lambda (x) x)])
                  (id 10))
              (new-env))
       Int)
+
   (tc (W-alg #'(let ([id (lambda (x) x)])
                  (id (id 10)))
              (new-env))
