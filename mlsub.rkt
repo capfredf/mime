@@ -94,6 +94,28 @@
   (struct uprim ([n : Symbol]) #:type-name UPrim #:transparent)
   (struct uvar ([n : Symbol]) #:type-name UVar #:transparent)
 
+
+  (define (uty->sexp [uty : UserFacingType]) : Any
+    (match uty
+      [(? utop?) 'Top]
+      [(? ubot?) 'Bot]
+      [(struct uinter [lhs rhs])
+       `(⊓ ,(uty->sexp lhs)
+           ,(uty->sexp rhs))]
+      [(struct uunion [lhs rhs])
+       `(⊔ ,(uty->sexp lhs)
+           ,(uty->sexp rhs))]
+      [(struct uarrow [lhs rhs])
+       `(-> ,(uty->sexp lhs)
+            ,(uty->sexp rhs))]
+      [(struct record [fs])
+       `({ ,@(map (lambda (a)
+                    `(,(car a) : ,(uty->sexp (cdr a)))) fs)})]
+      [(struct uprim [n])
+       n]
+      [(struct uvar [n])
+       n]))
+
   (define (coalesce-type [ty : MonoType]) : UserFacingType
     ;; todo a table to track recurive type vars.
     (: go (-> MonoType Boolean UserFacingType))
@@ -209,10 +231,10 @@
    (struct uunion [(? uvar?)
                    (uprim 'nat)]))
 
-  (coalesce-type (type-infer #'(lambda (f)
-                                 (lambda (x)
-                                   (f (f x))))
-                             (new-env)))
+  (uty->sexp (coalesce-type (type-infer #'(lambda (f)
+                                         (lambda (x)
+                                           (f (f x))))
+                                     (new-env))))
   (tc #'10 (prim 'nat))
   (tc #'(rcd [a 10]) (record (list [cons 'a (prim 'nat)])))
   (tc-alpha #'(lambda (a) a)
