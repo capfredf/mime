@@ -1,4 +1,4 @@
-#lang racket/base
+#lang debug racket/base
 
 
 (module typed-me typed/racket/base
@@ -41,13 +41,17 @@
     (var (variable-state null null)))
 
   (define-type Cache (Setof (Pairof MonoType MonoType)))
-  (define (constrain! [lhs : MonoType] [rhs : MonoType] [seen : Cache]) : Void
+
+  (: constrain! (->* [MonoType MonoType]
+                     [Cache]
+                     Void))
+  (define (constrain! lhs rhs [seen : Cache (set)]) : Void
     (cond
       [(set-member? seen (cons lhs rhs))
        (void)]
       [else
-       (define (recur [lhs : MonoType] [rhs : MonoType])
-         (constrain! lhs rhs (set-add seen (cons lhs rhs))))
+       (define (recur [lhs^ : MonoType] [rhs^ : MonoType]) : Void
+         (constrain! lhs^ rhs^ (set-add seen (cons lhs rhs))))
        (match* (lhs rhs)
          [((struct prim [a]) (struct prim [b]))
           #:when (equal? a b)
@@ -65,7 +69,19 @@
                (lambda (f2)
                  (recur (cdr f1) (cdr f2)))]
               [else
-               (error 'hi)]))])])))
+               (error 'hi)]))]
+         [((struct var [vs]) rhs)
+          (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
+          (for ([i (in-list (variable-state-lbs vs))])
+            (recur i rhs))]
+
+         [(lhs (struct var [vs]))
+          (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
+          (for ([i (in-list (variable-state-ubs vs))])
+            (recur lhs i))]
+
+         [(_ _)
+          (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])])))
 
 
 (module infer racket/base
@@ -93,16 +109,16 @@
                     (syntax->list #'(f ...))
                     (syntax->list #'(e ...))))]
       [(lambda (x:id) body:expr)
-       (define ty^ (fresh-var! 'alpha))
+       (define ty^ (fresh-var! 'abs))
        (arrow ty^ (type-infer #'body
                               (extend-env env #'x ty^)))]
       [(f arg)
-       (define ty (fresh-var!))
+       (define ty (fresh-var! 'app))
        (constrain! (type-infer #'f env)
                    (arrow (type-infer #'arg env) ty))
        ty]
       [(sel rcd name)
-       (define ty (fresh-var!))
+       (define ty (fresh-var! 'sel))
        (constrain! (type-infer #'rcd env)
                    (record (list (cons (syntax-e #'name) ty))))
        ty])))
@@ -141,7 +157,8 @@
   (tc-alpha #'(lambda (a) a)
             (let ([v (fresh-var! 'a)])
               (arrow v v)))
-  #;
-  (tc-alpha #'(lambda (a) (sel a x))
-            (let ([v (fresh-var! 'a)])
-              (arrow v v))))
+  (tc #'((lambda (a) a)
+         42)
+      ;; we know the result type is at least a Nat
+      (var (variable-state (list (prim 'nat))
+                           null))))
