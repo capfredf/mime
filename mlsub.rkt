@@ -36,8 +36,7 @@
   (struct prim ([name : Symbol]) #:type-name Prim #:transparent)
   (struct record ([fields : (Listof (Pairof Symbol MonoType))]) #:type-name Record #:transparent)
 
-
-  (define (fresh-var! [debug-symbol : Symbol]) : Var
+  (define (fresh-var! [debug-name : Symbol]) : Var
     (var (variable-state null null)))
 
   (define-type Cache (Setof (Pairof MonoType MonoType)))
@@ -81,7 +80,49 @@
             (recur lhs i))]
 
          [(_ _)
-          (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])])))
+          (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])]))
+
+  (define-type UserFacingType (U UVar UPrim UArrow URecord UTop UBot UInter UUnion))
+
+
+  (struct polar-var ([vs : VariableState] [st : Boolean]) #:type-name PolarVariable #:transparent)
+  (struct utop () #:type-name UTop #:transparent)
+  (struct ubot () #:type-name UBot #:transparent)
+  (struct uunion ([lhs : UserFacingType] [rhs : UserFacingType]) #:type-name UUnion #:transparent)
+  (struct uinter ([lhs : UserFacingType] [rhs : UserFacingType]) #:type-name UInter #:transparent)
+  (struct uarrow ([lhs : UserFacingType] [rhs : UserFacingType]) #:type-name UArrow #:transparent)
+  (struct urecord ([fs : (Listof (Pairof Symbol UserFacingType))]) #:type-name URecord #:transparent)
+  (struct uprim ([n : Symbol]) #:type-name UPrim #:transparent)
+  (struct uvar ([n : Symbol]) #:type-name UVar #:transparent)
+
+  (define (coalesce-type [ty : MonoType]) : UserFacingType
+    ;; todo a table to track recurive type vars.
+    (: go (-> MonoType Boolean UserFacingType))
+    (define (go ty polarity)
+      (match ty
+        [(struct prim [n])
+         (uprim n)]
+        [(struct arrow [param-ty ret-ty])
+         (uarrow (go param-ty (not polarity))
+                 (go ret-ty (not polarity)))]
+        [(struct record [fs])
+         (urecord (for/list ([i (in-list fs)])
+                    (cons (car i) (go (cdr i) polarity))))]
+        [(struct var [vs])
+         ;; todo handle recursive variables
+         (define-values (bounds merge-op)
+           (if polarity (values (variable-state-lbs vs) uunion)
+               (values (variable-state-ubs vs) uinter)))
+         (define bound-types : (Listof UserFacingType)
+           (for/list ([b (in-list bounds)])
+             (go b polarity)))
+         (define res : UserFacingType
+           (for/fold ([acc : UserFacingType (uvar (gensym 'var))])
+                     ([bt (in-list bound-types)])
+             (merge-op acc bt)))
+         ;; todo handle recursive types
+         res]))
+    (go ty #t)))
 
 
 (module infer racket/base
@@ -152,6 +193,23 @@
   (define-syntax-rule (tc-alpha given expected)
     (check-true (alpha-eq? (type-infer given (new-env))
                            expected)))
+
+  (check-match
+   (coalesce-type (var (variable-state (list (prim 'nat))
+                                       null)))
+   (struct uunion [(? uvar?)
+                   (uprim 'nat)]))
+
+  (check-match
+   (coalesce-type (var (variable-state (list (prim 'nat))
+                                       null)))
+   (struct uunion [(? uvar?)
+                   (uprim 'nat)]))
+
+  (coalesce-type (type-infer #'(lambda (f)
+                                 (lambda (x)
+                                   (f (f x))))
+                             (new-env)))
   (tc #'10 (prim 'nat))
   (tc #'(rcd [a 10]) (record (list [cons 'a (prim 'nat)])))
   (tc-alpha #'(lambda (a) a)
@@ -159,6 +217,6 @@
               (arrow v v)))
   (tc #'((lambda (a) a)
          42)
-      ;; we know the result type is at least a Nat
+      ;; we know the result type is at least a Nat, i.e, alpha V Nat
       (var (variable-state (list (prim 'nat))
                            null))))
