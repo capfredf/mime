@@ -2,7 +2,8 @@
 
 
 (module typed-me typed/racket/base
-  (require racket/match)
+  (require racket/match
+           racket/set)
   (provide (all-defined-out))
   (define-type MonoType (U Var Prim Arrow Record))
 
@@ -39,8 +40,32 @@
   (define (fresh-var! [debug-symbol : Symbol]) : Var
     (var (variable-state null null)))
 
-  (define (constrain! [lhs : MonoType] [rhs : MonoType]) : Void
-    (void)))
+  (define-type Cache (Setof (Pairof MonoType MonoType)))
+  (define (constrain! [lhs : MonoType] [rhs : MonoType] [seen : Cache]) : Void
+    (cond
+      [(set-member? seen (cons lhs rhs))
+       (void)]
+      [else
+       (define (recur [lhs : MonoType] [rhs : MonoType])
+         (constrain! lhs rhs (set-add seen (cons lhs rhs))))
+       (match* (lhs rhs)
+         [((struct prim [a]) (struct prim [b]))
+          #:when (equal? a b)
+          (void)]
+         [((struct arrow [p1 r1])
+           (struct arrow [p2 r2]))
+          (recur p2 p1)
+          (recur r1 r2)]
+         [((struct record [fs1])
+           (struct record [fs2]))
+          (for ([f1 (in-list fs1)])
+            (cond
+              [(assoc (car f1) fs2)
+               =>
+               (lambda (f2)
+                 (recur (cdr f1) (cdr f2)))]
+              [else
+               (error 'hi)]))])])))
 
 
 (module infer racket/base
