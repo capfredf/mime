@@ -31,13 +31,13 @@
     #:type-name VariableState
     #:transparent
     #:mutable)
-  (struct var ([state : VariableState]) #:type-name Var #:transparent)
+  (struct var ([uniq-name : Symbol] [state : VariableState]) #:type-name Var #:transparent)
   (struct arrow ([arg-type : MonoType] [ret-type : MonoType]) #:type-name Arrow #:transparent)
   (struct prim ([name : Symbol]) #:type-name Prim #:transparent)
   (struct record ([fields : (Listof (Pairof Symbol MonoType))]) #:type-name Record #:transparent)
 
   (define (fresh-var! [debug-name : Symbol]) : Var
-    (var (variable-state null null)))
+    (var (gensym debug-name) (variable-state null null)))
 
   (define-type Cache (Setof (Pairof MonoType MonoType)))
 
@@ -69,12 +69,12 @@
                  (recur (cdr f1) (cdr f2)))]
               [else
                (error 'hi)]))]
-         [((struct var [vs]) rhs)
+         [((struct var [_ vs]) rhs)
           (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
           (for ([i (in-list (variable-state-lbs vs))])
             (recur i rhs))]
 
-         [(lhs (struct var [vs]))
+         [(lhs (struct var [_ vs]))
           (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
           (for ([i (in-list (variable-state-ubs vs))])
             (recur lhs i))]
@@ -108,7 +108,7 @@
         [(struct record [fs])
          (urecord (for/list ([i (in-list fs)])
                     (cons (car i) (go (cdr i) polarity))))]
-        [(struct var [vs])
+        [(struct var [n vs])
          ;; todo handle recursive variables
          (define-values (bounds merge-op)
            (if polarity (values (variable-state-lbs vs) uunion)
@@ -117,7 +117,7 @@
            (for/list ([b (in-list bounds)])
              (go b polarity)))
          (define res : UserFacingType
-           (for/fold ([acc : UserFacingType (uvar (gensym 'var))])
+           (for/fold ([acc : UserFacingType (uvar n)])
                      ([bt (in-list bound-types)])
              (merge-op acc bt)))
          ;; todo handle recursive types
@@ -142,7 +142,7 @@
       #:literals (lambda let rcd sel)
       [var:id
        (lookup-env env #'var)]
-      [var:nat
+      [_:nat
        (prim 'nat)]
       [(rcd (f:id e:expr) ...)
        (record (map (lambda (n e)
@@ -190,18 +190,22 @@
     (check-equal? (type-infer given (new-env))
                   expected))
 
+  (define-syntax-rule (tc-match given expected)
+    (check-match (type-infer given (new-env))
+                  expected))
+
   (define-syntax-rule (tc-alpha given expected)
     (check-true (alpha-eq? (type-infer given (new-env))
                            expected)))
 
   (check-match
-   (coalesce-type (var (variable-state (list (prim 'nat))
+   (coalesce-type (var 'hi (variable-state (list (prim 'nat))
                                        null)))
    (struct uunion [(? uvar?)
                    (uprim 'nat)]))
 
   (check-match
-   (coalesce-type (var (variable-state (list (prim 'nat))
+   (coalesce-type (var 'hi (variable-state (list (prim 'nat))
                                        null)))
    (struct uunion [(? uvar?)
                    (uprim 'nat)]))
@@ -215,8 +219,9 @@
   (tc-alpha #'(lambda (a) a)
             (let ([v (fresh-var! 'a)])
               (arrow v v)))
-  (tc #'((lambda (a) a)
-         42)
-      ;; we know the result type is at least a Nat, i.e, alpha V Nat
-      (var (variable-state (list (prim 'nat))
-                           null))))
+
+  (tc-match #'((lambda (a) a)
+               42)
+            ;; we know the result type is at least a Nat, i.e, alpha V Nat
+            (var _ (variable-state (list (prim 'nat))
+                                   null))))
