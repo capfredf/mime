@@ -1,5 +1,4 @@
-#lang debug racket/base
-
+#lang racket/base
 
 (module typed-me typed/racket/base
   (require racket/match
