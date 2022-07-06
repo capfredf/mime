@@ -80,6 +80,12 @@
         ty))
 
 
+  (define (fmap-record [ty : Record] [f : (-> MonoType MonoType)])
+    (match-define (record fs) ty)
+    (record (for/list ([i (in-list fs)])
+              (cond (car i) (f (cdr i))))))
+
+
   (define (fresh-var! [debug-name : Symbol] [lvl : Natural 0]) : Var
     (var (gensym debug-name) (variable-state lvl null null)))
 
@@ -113,19 +119,53 @@
                  (recur (cdr f1) (cdr f2)))]
               [else
                (error 'hi)]))]
-         [((struct var [_ vs]) rhs)
+         [((struct var [_ vs]) rhs) #:when (<= (variable-state-lvl vs) (type-level lhs))
           (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
           (for ([i (in-list (variable-state-lbs vs))])
             (recur i rhs))]
 
-         [(lhs (struct var [_ vs]))
+         [(lhs (struct var [_ vs])) #:when (<= (type-level lhs) (variable-state-lvl vs))
           (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
           (for ([i (in-list (variable-state-ubs vs))])
             (recur lhs i))]
 
+         [((? var? lhs) rhs)
+          (recur lhs (extrude rhs #f (type-level lhs)))]
+
+         [(lhs (? var? rhs))
+          (recur (extrude lhs #t (type-level rhs)) rhs)]
          [(_ _)
           (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])]))
 
+  (define (extrude [ty : MonoType] [polarity : Boolean] [level : Natural]) : MonoType
+    ;; todo: handle recurive types
+    (let recur : MonoType ([ty : MonoType ty]
+                           [polarity : Boolean polarity])
+      (cond
+        [(< (type-level ty) level)
+         ty]
+        [else
+         (match ty
+           [(? prim?) ty]
+           [(arrow arg-ty ret-ty)
+            (arrow (recur arg-ty (not polarity))
+                   (recur ret-ty polarity))]
+           [(? record?)
+            (fmap-record ty (lambda ([x : MonoType])
+                              (recur x polarity)))]
+           [(var _ (and (variable-state _ lbs ubs) vs))
+            (define nvar (fresh-var! 'nvs level))
+            (match-define (var _ nvs) nvar)
+            (cond
+              [polarity
+               (set-variable-state-ubs! vs (cons nvar ubs))
+               (set-variable-state-lbs! nvs (for/list ([i (in-list lbs)])
+                                              (recur i polarity)))]
+              [else
+               (set-variable-state-lbs! vs (cons nvar lbs))
+               (set-variable-state-ubs! nvs (for/list ([i (in-list ubs)])
+                                              (recur i (not polarity))))])
+            nvar])])))
   (define-type UserFacingType (U UVar UPrim UArrow URecord UTop UBot UInter UUnion))
 
 
