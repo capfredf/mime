@@ -2,6 +2,7 @@
 
 (module typed-me typed/racket/base
   (require racket/match
+           racket/list
            racket/set)
   (provide (all-defined-out))
   (define-type MonoType (U Var Prim Arrow Record))
@@ -25,7 +26,8 @@
     (cons (cons var ty) env))
 
 
-  (struct variable-state ([lbs : (Listof MonoType)]
+  (struct variable-state ([lvl : Natural]
+                          [lbs : (Listof MonoType)]
                           [ubs : (Listof MonoType)])
     #:type-name VariableState
     #:transparent
@@ -34,9 +36,35 @@
   (struct arrow ([arg-type : MonoType] [ret-type : MonoType]) #:type-name Arrow #:transparent)
   (struct prim ([name : Symbol]) #:type-name Prim #:transparent)
   (struct record ([fields : (Listof (Pairof Symbol MonoType))]) #:type-name Record #:transparent)
+  (define-type Type (U MonoType PolyType))
 
-  (define (fresh-var! [debug-name : Symbol]) : Var
-    (var (gensym debug-name) (variable-state null null)))
+  (struct poly-type ([level : Natural] [body : MonoType]) #:transparent #:type-name PolyType #:constructor-name make-poly)
+
+  (: type-level (-> Type Natural))
+  (define (type-level type)
+    (match type
+      [(var _ (variable-state lvl _ _)) lvl]
+      [(arrow arg-type ret-type) (max (type-level arg-type) (type-level ret-type))]
+      [(? prim?) 0]
+      [(record fs) ((inst argmax Natural)
+                    (lambda (x) x)
+                    (map (lambda ([x : (Pairof Symbol MonoType)])
+                           (type-level (cdr x)))
+                         fs))]))
+
+  (define (freshen-above [ty : PolyType] [level : Natural])
+    (void))
+
+  (define (instantiate [ty : Type] [level : Natural])
+    (if (poly-type? ty)
+        ;; replace the variables above (type-level ty) with fresh varibles at `level`
+        ;; what does this mean?
+        (freshen-above ty level)
+        ty))
+
+
+  (define (fresh-var! [debug-name : Symbol] [lvl : Natural 0]) : Var
+    (var (gensym debug-name) (variable-state lvl null null)))
 
   (define-type Cache (Setof (Pairof MonoType MonoType)))
 
@@ -93,6 +121,7 @@
   (struct urecord ([fs : (Listof (Pairof Symbol UserFacingType))]) #:type-name URecord #:transparent)
   (struct uprim ([n : Symbol]) #:type-name UPrim #:transparent)
   (struct uvar ([n : Symbol]) #:type-name UVar #:transparent)
+
 
 
   (define (uty->sexp [uty : UserFacingType]) : Any
@@ -158,7 +187,7 @@
   (define-syntax (sel stx)
     (error 'hi "don't call me"))
 
-  (define (type-infer term env)
+  (define (type-infer term env [lvl 0])
     (syntax-parse term
       #:literals (lambda let rcd sel)
       [var:id
@@ -179,6 +208,10 @@
        (constrain! (type-infer #'f env)
                    (arrow (type-infer #'arg env) ty))
        ty]
+      #;
+      [(let ([x rhs]) body)
+       (define ty^ (type-infer #'rhs env (add1 lvl)))
+       (type-infer #'body (extend-env env #'x (poly-type ty^)))]
       [(sel rcd name)
        (define ty (fresh-var! 'sel))
        (constrain! (type-infer #'rcd env)
