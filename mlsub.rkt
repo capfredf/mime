@@ -245,32 +245,44 @@
     (error 'hi "don't call me"))
 
   (define (type-infer term env [lvl 0])
+    (define (recur term [env env] [lvl lvl])
+      (type-infer term env lvl))
+
     (syntax-parse term
-      #:literals (lambda let rcd sel)
+      #:literals (lambda let rcd sel if)
       [var:id
        (instantiate (lookup-env env #'var) lvl)]
       [_:nat
        (prim 'nat)]
+      [_:boolean
+       (prim 'bool)]
       [(rcd (f:id e:expr) ...)
        (record (map (lambda (n e)
-                      (cons (syntax-e n) (type-infer e env)))
+                      (cons (syntax-e n) (recur e)))
                     (syntax->list #'(f ...))
                     (syntax->list #'(e ...))))]
       [(lambda (x:id) body:expr)
        (define ty^ (fresh-var! 'abs))
-       (arrow ty^ (type-infer #'body
+       (arrow ty^ (recur #'body
                               (extend-env env #'x ty^)))]
       [(f arg)
        (define ty (fresh-var! 'app))
-       (constrain! (type-infer #'f env)
-                   (arrow (type-infer #'arg env) ty))
+       (constrain! (recur #'f)
+                   (arrow (recur #'arg) ty))
+       ty]
+      [(if cond-expr then-expr else-expr)
+       (constrain! (recur #'cond-expr)
+                   (prim 'bool))
+       (define ty (recur #'then-expr))
+       (constrain! ty
+                   (recur #'else-expr))
        ty]
       [(let ([x rhs]) body)
-       (define ty^ (type-infer #'rhs env (add1 lvl)))
-       (type-infer #'body (extend-env env #'x (poly-type lvl ty^)))]
+       (define ty^ (recur #'rhs env (add1 lvl)))
+       (recur #'body (extend-env env #'x (poly-type lvl ty^)))]
       [(sel rcd name)
        (define ty (fresh-var! 'sel))
-       (constrain! (type-infer #'rcd env)
+       (constrain! (recur #'rcd env)
                    (record (list (cons (syntax-e #'name) ty))))
        ty])))
 
@@ -324,6 +336,8 @@
                                            (f (f x))))
                                      (new-env))))
   (tc #'10 (prim 'nat))
+  (tc #'#t (prim 'bool))
+  (tc #'(if #t 42 24) (prim 'nat))
   (tc #'(rcd [a 10]) (record (list [cons 'a (prim 'nat)])))
   (tc-alpha #'(lambda (a) a)
             (let ([v (fresh-var! 'a)])
