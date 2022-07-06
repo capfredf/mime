@@ -271,12 +271,13 @@
                    (arrow (recur #'arg) ty))
        ty]
       [(if cond-expr then-expr else-expr)
-       (constrain! (recur #'cond-expr)
+       (define ty^ (recur #'cond-expr))
+       (constrain! ty^
                    (prim 'bool))
-       (define ty (recur #'then-expr))
-       (constrain! ty
+       (define ty^^ (recur #'then-expr))
+       (constrain! ty^^
                    (recur #'else-expr))
-       ty]
+       ty^^]
       [(let ([x rhs]) body)
        (define ty^ (recur #'rhs env (add1 lvl)))
        (recur #'body (extend-env env #'x (poly-type lvl ty^)))]
@@ -284,8 +285,12 @@
        (define ty (fresh-var! 'sel))
        (constrain! (recur #'rcd env)
                    (record (list (cons (syntax-e #'name) ty))))
-       ty])))
+       ty]))
 
+  (type-infer #'(lambda (p)
+                  (if (p 10) 42
+                      24))
+              (new-env)))
 
 (module+ test
   (require rackunit
@@ -334,6 +339,13 @@
   (uty->sexp (coalesce-type (type-infer #'(lambda (f)
                                          (lambda (x)
                                            (f (f x))))
+                                        (new-env))))
+
+  (uty->sexp (coalesce-type (type-infer #'(lambda (p)
+                                            (lambda (v)
+                                              (lambda (d)
+                                                (if (p v) v
+                                                    d))))
                                      (new-env))))
   (tc #'10 (prim 'nat))
   (tc #'#t (prim 'bool))
