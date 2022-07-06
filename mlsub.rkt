@@ -274,7 +274,8 @@
        (define ty^ (recur #'cond-expr))
        (constrain! ty^
                    (prim 'bool))
-       (define ty^^ (recur #'then-expr))
+       (define ty^^ (fresh-var! 'br))
+       (constrain! ty^^ (recur #'then-expr))
        (constrain! ty^^
                    (recur #'else-expr))
        ty^^]
