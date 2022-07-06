@@ -7,9 +7,9 @@
   (provide (all-defined-out))
   (define-type MonoType (U Var Prim Arrow Record))
 
-  (define-type Env (Listof (Pairof Identifier MonoType)))
+  (define-type Env (Listof (Pairof Identifier Type)))
 
-  (: lookup-env (-> Env Identifier MonoType))
+  (: lookup-env (-> Env Identifier Type))
   (define (lookup-env env var)
     (cond
       [(assoc var env free-identifier=?)
@@ -21,7 +21,7 @@
   (define (new-env)
     null)
 
-  (: extend-env (-> Env Identifier MonoType Env))
+  (: extend-env (-> Env Identifier Type Env))
   (define (extend-env env var ty)
     (cons (cons var ty) env))
 
@@ -38,7 +38,7 @@
   (struct record ([fields : (Listof (Pairof Symbol MonoType))]) #:type-name Record #:transparent)
   (define-type Type (U MonoType PolyType))
 
-  (struct poly-type ([level : Natural] [body : MonoType]) #:transparent #:type-name PolyType #:constructor-name make-poly)
+  (struct poly-type ([level : Natural] [body : MonoType]) #:transparent #:type-name PolyType)
 
   (: type-level (-> Type Natural))
   (define (type-level type)
@@ -52,13 +52,30 @@
                            (type-level (cdr x)))
                          fs))]))
 
-  (define (freshen-above [ty : PolyType] [level : Natural])
-    (void))
+  (define (freshen-above [ty : PolyType] [level : Natural]) : Type
+    (match-define (poly-type lvl b) ty)
+    (define cache : (HashTable Var Var) (make-hash))
+    (let freshen : MonoType ([ty : MonoType b])
+      (match ty
+        [(? var?)
+         #:when (hash-ref cache ty #f)
+         (hash-ref cache ty)]
+        [(var n (variable-state lvl^ lbs ubs))
+         (if (< lvl lvl^)
+             (var n (variable-state level (map freshen lbs) (map freshen ubs)))
+             ty)]
+        [(arrow arg-ty ret-ty)
+         (arrow (freshen arg-ty)
+                (freshen ret-ty))]
+        [(record fs)
+         (record (for/list ([i (in-list fs)])
+                   (cons (car i) (freshen (cdr i)))))]
+        [(? prim?) ty])))
 
-  (define (instantiate [ty : Type] [level : Natural])
+  (define (instantiate [ty : Type] [level : Natural]) : Type
     (if (poly-type? ty)
         ;; replace the variables above (type-level ty) with fresh varibles at `level`
-        ;; what does this mean?
+        ;; i.e. all the nesting alphas. ∀α₁α₂α₃....
         (freshen-above ty level)
         ty))
 
@@ -191,7 +208,7 @@
     (syntax-parse term
       #:literals (lambda let rcd sel)
       [var:id
-       (lookup-env env #'var)]
+       (instantiate (lookup-env env #'var) lvl)]
       [_:nat
        (prim 'nat)]
       [(rcd (f:id e:expr) ...)
@@ -208,10 +225,9 @@
        (constrain! (type-infer #'f env)
                    (arrow (type-infer #'arg env) ty))
        ty]
-      #;
       [(let ([x rhs]) body)
        (define ty^ (type-infer #'rhs env (add1 lvl)))
-       (type-infer #'body (extend-env env #'x (poly-type ty^)))]
+       (type-infer #'body (extend-env env #'x (poly-type lvl ty^)))]
       [(sel rcd name)
        (define ty (fresh-var! 'sel))
        (constrain! (type-infer #'rcd env)
@@ -228,7 +244,6 @@
   (define (alpha-eq? t1 t2)
     (match* (t1 t2)
       [((? var?) (? var?)) #t]
-      #;
       [((? poly-type?) (? poly-type?))
        (alpha-eq? (poly-type-body t1)
                   (poly-type-body t2))]
@@ -253,13 +268,13 @@
                            expected)))
 
   (check-match
-   (coalesce-type (var 'hi (variable-state (list (prim 'nat))
+   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
                                        null)))
    (struct uunion [(? uvar?)
                    (uprim 'nat)]))
 
   (check-match
-   (coalesce-type (var 'hi (variable-state (list (prim 'nat))
+   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
                                        null)))
    (struct uunion [(? uvar?)
                    (uprim 'nat)]))
@@ -274,8 +289,15 @@
             (let ([v (fresh-var! 'a)])
               (arrow v v)))
 
+  (tc-match #'(let ([f (lambda (x) x)])
+                (f 42))
+            (var _ (variable-state _
+                                   (list (prim 'nat))
+                                   null)))
+
   (tc-match #'((lambda (a) a)
                42)
             ;; we know the result type is at least a Nat, i.e, alpha V Nat
-            (var _ (variable-state (list (prim 'nat))
+            (var _ (variable-state _
+                                   (list (prim 'nat))
                                    null))))
