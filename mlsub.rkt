@@ -275,9 +275,8 @@
        (constrain! ty^
                    (prim 'bool))
        (define ty^^ (fresh-var! 'br))
-       (constrain! ty^^ (recur #'then-expr))
-       (constrain! ty^^
-                   (recur #'else-expr))
+       (constrain! (recur #'then-expr) ty^^)
+       (constrain! (recur #'else-expr) ty^^)
        ty^^]
       [(let ([x rhs]) body)
        (define ty^ (recur #'rhs env (add1 lvl)))
