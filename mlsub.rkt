@@ -290,8 +290,7 @@
                    (arrow (recur #'arg) ty))
        ty]
       [(if cond-expr then-expr else-expr)
-       (define ty^ (recur #'cond-expr))
-       (constrain! ty^
+       (constrain! (recur #'cond-expr)
                    (prim 'bool))
        (define ty^^ (fresh-var! 'br))
        (constrain! (recur #'then-expr) ty^^)
