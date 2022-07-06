@@ -179,28 +179,47 @@
   (struct uprim ([n : Symbol]) #:type-name UPrim #:transparent)
   (struct uvar ([n : Symbol]) #:type-name UVar #:transparent)
 
-
-
   (define (uty->sexp [uty : UserFacingType]) : Any
-    (match uty
-      [(? utop?) 'Top]
-      [(? ubot?) 'Bot]
-      [(struct uinter [lhs rhs])
-       `(⊓ ,(uty->sexp lhs)
-           ,(uty->sexp rhs))]
-      [(struct uunion [lhs rhs])
-       `(⊔ ,(uty->sexp lhs)
-           ,(uty->sexp rhs))]
-      [(struct uarrow [lhs rhs])
-       `(-> ,(uty->sexp lhs)
-            ,(uty->sexp rhs))]
-      [(struct record [fs])
-       `({ ,@(map (lambda (a)
-                    `(,(car a) : ,(uty->sexp (cdr a)))) fs)})]
-      [(struct uprim [n])
-       n]
-      [(struct uvar [n])
-       n]))
+    (define pretty-vars (list "α" "β" "γ" "δ" "η"))
+    (define seq 0)
+    (define idx 0)
+    (define var-tbl : (HashTable Symbol Symbol) (make-hash))
+    (define (produce-beatiful-var [var : Symbol]) : Symbol
+      (define (produce!) : Symbol
+        (define var (list-ref pretty-vars idx))
+        (define ret (string->symbol
+                     (if (< seq 5)
+                         var
+                         (string-append var (number->string (quotient seq 5))))))
+        (set! idx (modulo (add1 idx) (length pretty-vars)))
+        (set! seq (add1 seq))
+        ret)
+      (cond
+        [(hash-ref var-tbl var #f)]
+        [else (define ret (produce!))
+              (hash-set! var-tbl var ret)
+              ret]))
+
+    (let recur : Any ([uty : UserFacingType uty])
+      (match uty
+        [(? utop?) 'Top]
+        [(? ubot?) 'Bot]
+        [(struct uinter [lhs rhs])
+         `(⊓ ,(recur lhs)
+             ,(recur rhs))]
+        [(struct uunion [lhs rhs])
+         `(⊔ ,(recur lhs)
+             ,(recur rhs))]
+        [(struct uarrow [lhs rhs])
+         `(-> ,(recur lhs)
+              ,(recur rhs))]
+        [(struct record [fs])
+         `({ ,@(map (lambda (a)
+                      `(,(car a) : ,(recur (cdr a)))) fs)})]
+        [(struct uprim [n])
+         n]
+        [(struct uvar [n])
+         (produce-beatiful-var n)])))
 
   (define (coalesce-type [ty : MonoType]) : UserFacingType
     ;; todo a table to track recurive type vars.
@@ -287,10 +306,23 @@
                    (record (list (cons (syntax-e #'name) ty))))
        ty]))
 
+  #;
   (type-infer #'(lambda (p)
                   (if (p 10) 42
                       24))
-              (new-env)))
+              (new-env))
+  #;
+  (coalesce-type (arrow
+                  (var
+                   'a
+                   (variable-state 0 '() (list (arrow (prim 'nat) (var 'b (variable-state 0 '() (list (prim 'bool))))))))
+                  (prim 'nat)))
+
+  (uty->sexp
+   (coalesce-type (type-infer #'(lambda (p)
+                                  (if (p 10) #t
+                                      24))
+                              (new-env)))))
 
 (module+ test
   (require rackunit
