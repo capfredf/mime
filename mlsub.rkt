@@ -211,7 +211,7 @@
          (uprim n)]
         [(struct arrow [param-ty ret-ty])
          (uarrow (go param-ty (not polarity))
-                 (go ret-ty (not polarity)))]
+                 (go ret-ty polarity))]
         [(struct record [fs])
          (urecord (for/list ([i (in-list fs)])
                     (cons (car i) (go (cdr i) polarity))))]
