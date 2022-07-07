@@ -127,6 +127,7 @@
                                      (new-env))))
   (tc #'10 (prim 'nat))
   (tc #'#t (prim 'bool))
+  #;
   (tc #'(if #t 42 24) (prim 'nat))
   (tc #'(rcd [a 10]) (record (list [cons 'a (prim 'nat)])))
   (tc-alpha #'(lambda (a) a)
