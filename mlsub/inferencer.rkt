@@ -11,9 +11,9 @@
 (define-syntax (sel stx)
   (error 'hi "don't call me"))
 
-(define (type-infer term env [lvl 0])
+(define (do-type-infer term env [lvl 0])
   (define (recur term [env env] [lvl lvl])
-    (type-infer term env lvl))
+    (do-type-infer term env lvl))
 
   (syntax-parse term
     #:literals (lambda let rcd sel if)
@@ -53,24 +53,8 @@
                  (record (list (cons (syntax-e #'name) ty))))
      ty]))
 
-#;
-(type-infer #'(lambda (p)
-                (if (p 10) 42
-                    24))
-            (new-env))
-#;
-(coalesce-type (arrow
-                (var
-                 'a
-                 (variable-state 0 '() (list (arrow (prim 'nat) (var 'b (variable-state 0 '() (list (prim 'bool))))))))
-                (prim 'nat)))
-
-
-(uty->sexp
- (coalesce-type (type-infer #'(lambda (p)
-                                (if (p 10) #t
-                                    24))
-                            (new-env))))
+(define (type-infer term)
+  (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
 
 
 (module+ test
@@ -91,55 +75,55 @@
        (and (equal? a b) a b)]))
 
   (define-syntax-rule (tc given expected)
-    (check-equal? (type-infer given (new-env))
+    (check-equal? (type-infer given)
                   expected))
 
   (define-syntax-rule (tc-match given expected)
-    (check-match (type-infer given (new-env))
+    (check-match (type-infer given)
                   expected))
 
   (define-syntax-rule (tc-alpha given expected)
-    (check-true (alpha-eq? (type-infer given (new-env))
+    (check-true (alpha-eq? (type-infer given)
                            expected)))
 
-  (check-match
-   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
-                                       null)))
-   (struct uunion [(? uvar?)
-                   (uprim 'nat)]))
+  (check-equal?
+   (type-infer #'(lambda (p)
+                   (if (p 10) #t
+                       24)))
+   '(-> (-> nat bool) (⊔ nat bool)))
 
-  (check-match
-   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
-                                       null)))
-   (struct uunion [(? uvar?)
-                   (uprim 'nat)]))
+  (check-equal?
+   (type-infer #'(lambda (x)
+                   x))
+   '(-> α α))
 
-  (uty->sexp (coalesce-type (type-infer #'(lambda (f)
-                                         (lambda (x)
-                                           (f (f x))))
-                                        (new-env))))
 
-  (uty->sexp (coalesce-type (type-infer #'(lambda (p)
-                                            (lambda (v)
-                                              (lambda (d)
-                                                (if (p v) v
-                                                    d))))
-                                     (new-env))))
-  (tc #'10 (prim 'nat))
-  (tc #'#t (prim 'bool))
+
+  ;; TODO
+  ;; (uty->sexp (coalesce-type (type-infer #'(lambda (f)
+  ;;                                        (lambda (x)
+  ;;                                          (f (f x))))
+  ;;                                       (new-env))))
+
+  ;; (uty->sexp (coalesce-type (type-infer #'(lambda (p)
+  ;;                                           (lambda (v)
+  ;;                                             (lambda (d)
+  ;;                                               (if (p v) v
+  ;;                                                   d))))
+  ;;                                    (new-env))))
+  (tc #'10 'nat)
+  (tc #'#t 'bool)
+  (tc #'(if #t 42 24) 'nat)
+  (tc #'(rcd [a 10]) '{[a : nat]})
+
   #;
-  (tc #'(if #t 42 24) (prim 'nat))
-  (tc #'(rcd [a 10]) (record (list [cons 'a (prim 'nat)])))
-  (tc-alpha #'(lambda (a) a)
-            (let ([v (fresh-var! 'a)])
-              (arrow v v)))
-
   (tc-match #'(let ([f (lambda (x) x)])
                 (f 42))
             (var _ (variable-state _
                                    (list (prim 'nat))
                                    null)))
 
+  #;
   (tc-match #'((lambda (a) a)
                42)
             ;; we know the result type is at least a Nat, i.e, alpha V Nat

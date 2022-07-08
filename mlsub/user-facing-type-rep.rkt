@@ -1,5 +1,6 @@
 #lang typed/racket/base
 (require "internal-type-rep.rkt"
+         "simplifier.rkt"
          racket/match
          racket/list
          racket/set)
@@ -53,16 +54,44 @@
       [(struct uarrow [lhs rhs])
        `(-> ,(recur lhs)
             ,(recur rhs))]
-      [(struct record [fs])
-       `({ ,@(map (lambda (a)
-                    `(,(car a) : ,(recur (cdr a)))) fs)})]
+      [(struct urecord [fs])
+       (map (lambda ([a : (Pairof Symbol UserFacingType)])
+              `(,(car a) : ,(recur (cdr a)))) fs)]
       [(struct uprim [n])
        n]
       [(struct uvar [n])
        (produce-beatiful-var n)])))
 
+
 (define (coalesce-type [ty : MonoType]) : UserFacingType
   ;; todo a table to track recurive type vars.
+
+  (define ((create-merge-op [op : (-> UserFacingType UserFacingType UserFacingType)]
+                            [base-pred : (-> UserFacingType Boolean)])
+           [ty1 : UserFacingType] [ty2 : UserFacingType]) : UserFacingType
+    (cond
+      [(base-pred ty1) ty2]
+      [(base-pred ty2) ty1]
+      [else (op ty1 ty2)]))
+
+
+  (define (un-fun [a : UserFacingType] [b : UserFacingType])
+    (cond
+      ;; use subtype instead
+      [(equal? a b) b]
+      [else (uunion a b)]))
+
+  (define (inter-fun [a : UserFacingType] [b : UserFacingType])
+    ;; use subtype instead
+    [cond
+      [(equal? a b) a]
+      [else (uinter a b)]])
+
+  (define union-op (create-merge-op un-fun ubot?))
+  (define inter-op (create-merge-op inter-fun utop?))
+
+  (define tbl : VarInfo (co-analyze ty))
+
   (: go (-> MonoType Boolean UserFacingType))
   (define (go ty polarity)
     (match ty
@@ -77,15 +106,40 @@
       [(struct var [n vs])
        ;; todo handle recursive variables
        (define-values (bounds merge-op)
-         (if polarity (values (variable-state-lbs vs) uunion)
-             (values (variable-state-ubs vs) uinter)))
+         (if polarity (values (variable-state-lbs vs) union-op)
+             (values (variable-state-ubs vs) inter-op)))
        (define bound-types : (Listof UserFacingType)
          (for/list ([b (in-list bounds)])
            (go b polarity)))
+
+       (define base (if (var-needed? tbl ty)
+                        (uvar n)
+                        (if polarity (ubot)
+                            (utop))))
        (define res : UserFacingType
-         (for/fold ([acc : UserFacingType (uvar n)])
+         (for/fold ([acc : UserFacingType base])
                    ([bt (in-list bound-types)])
            (merge-op acc bt)))
        ;; todo handle recursive types
        res]))
   (go ty #t))
+
+
+(module* test racket/base
+  (require rackunit)
+  (require (submod "..")
+           "internal-type-rep.rkt")
+  (check-match
+   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
+                                       null)))
+   (uprim 'nat))
+
+  (check-equal? (coalesce-type (arrow (var 'hi (variable-state 0 null
+                                                                (list (prim 'nat))))
+                                       (prim 'bool)))
+                (uarrow (uprim 'nat) (uprim 'bool)))
+  (let ([v (var 'hi (variable-state 0 null null))])
+    (check-match (coalesce-type (arrow v
+                                  v))
+                 (uarrow (? uvar? a) (? uvar? b))
+                 (equal? a b))))

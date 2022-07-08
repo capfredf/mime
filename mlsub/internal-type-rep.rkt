@@ -166,3 +166,15 @@
              (set-variable-state-ubs! nvs (for/list ([i (in-list ubs)])
                                             (recur i (not polarity))))])
           nvar])])))
+
+
+(module+ test
+  (require typed/rackunit)
+
+  (define-syntax-rule (tc given expected)
+    (check-equal? (type-infer given (new-env))
+                  expected))
+
+  (define-syntax-rule (tc-alpha given expected)
+    (check-true (alpha-eq? (type-infer given (new-env))
+                           expected))))
