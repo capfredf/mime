@@ -20,8 +20,17 @@
   (define var-tbl : (HashTable Var PolarityOcurrence)
     (make-hash))
 
-  (let recur1 : Void ([ty : MonoType ty]
-                      [polarity : Boolean #t])
+  (: co-occur? (-> Var Boolean MonoType Boolean))
+  (define (co-occur? ty1 polar ty2)
+    (match ty2
+      [(var _ (variable-state _ lbs ubs))
+       (define bounds (if polar lbs
+                          ubs))
+       (set-member? bounds ty1)]
+      [_ #f]))
+
+  (let remove-polar-var : Void ([ty : MonoType ty]
+                                [polarity : Boolean #t])
     (match ty
       [(? var?)
        (hash-update! var-tbl ty
@@ -35,11 +44,37 @@
                            (cons #f #t))))]
       [(? prim?) (void)]
       [(arrow arg-ty ret-ty)
-       (recur1 arg-ty (not polarity))
-       (recur1 ret-ty polarity)]
+       (remove-polar-var arg-ty (not polarity))
+       (remove-polar-var ret-ty polarity)]
       [(record fs)
        (for ([f (in-list fs)])
-         (recur1 (cdr f) polarity))]))
+         (remove-polar-var (cdr f) polarity))]))
+
+  (let unify-vars : Void ([ty : MonoType ty]
+                          [polarity : Boolean #t])
+    (match ty
+      [(var _ (and (variable-state _ lbs ubs) vs))
+       (define bounds (if polarity lbs ubs))
+       (define new-bounds (for/list : (Listof MonoType)
+                                    ([i (in-list bounds)]
+                                     #:unless (co-occur? ty polarity i))
+                            i))
+       (if polarity
+           (set-variable-state-lbs! vs new-bounds)
+           (set-variable-state-ubs! vs new-bounds))
+
+       (for ([b (in-list lbs)])
+         (unify-vars b polarity))
+
+       (for ([b (in-list ubs)])
+         (unify-vars b polarity))]
+      [(arrow arg-ty ret-ty)
+       (unify-vars arg-ty (not polarity))
+       (unify-vars ret-ty polarity)]
+      [(? prim?) (void)]
+      [(record fs)
+       (for ([f (in-list fs)])
+         (unify-vars (cdr f) polarity))]))
 
   (for*/hash : VarInfo
              ([([v : Var] [b : PolarityOcurrence]) (in-hash var-tbl)]
