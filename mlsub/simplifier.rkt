@@ -83,7 +83,14 @@
   (let remove-polar-var : Void ([ty : MonoType ty]
                                 [polarity : Boolean #t])
     (match ty
-      [(? var?)
+      [(var _ (variable-state _ lbs ubs))
+       (for-each (lambda ([a : MonoType])
+                   (remove-polar-var a polarity))
+                 lbs)
+
+       (for-each (lambda ([a : MonoType])
+                   (remove-polar-var a polarity))
+                 ubs)
        (hash-update! var-tbl ty
                      (lambda ([v : PolarityOcurrence]) : PolarityOcurrence
                        (if polarity

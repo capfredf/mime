@@ -97,6 +97,13 @@
                    x))
    '(-> α α))
 
+  (check-equal?
+   (type-infer #'(lambda (a)
+                   (lambda (b)
+                     (if #t a
+                         b))))
+   '(-> α (-> α α)))
+
 
 
   ;; TODO
