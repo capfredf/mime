@@ -12,9 +12,6 @@
 
 (define-type VarInfo (Immutable-HashTable Var Boolean))
 
-(define (var-needed? [tbl : VarInfo] [var : Var]) : Boolean
-  (hash-ref tbl var #f))
-
 
 (: co-occur? (-> Var Boolean MonoType Boolean))
 (define (co-occur? ty1 polar ty2)
@@ -96,7 +93,7 @@
          (unify-vars! (cdr f) polarity))]))
   unified-var-mapping)
 
-(define (co-analyze [ty : MonoType]) : VarInfo
+(define (co-analyze [ty : MonoType]) : (-> Var Boolean)
   (define var-tbl : (HashTable Var PolarityOcurrence)
     (make-hash))
 
@@ -130,30 +127,36 @@
          (remove-polar-var (cdr f) polarity))]))
 
 
-  #;
-  (unify-vars! ty #t)
-  (for*/hash : VarInfo
-               ([([v : Var] [b : PolarityOcurrence]) (in-hash var-tbl)]
-                #:when (and (car b) (cdr b)
-                            (let ()
-                              (match-define (var _ (variable-state _ lbs ubs)) v)
-                              ;; if lbs and ubs are non-empty,
-                              ;; lbs - ubs is empty, then the variable are complete sandwiched, i.e. t1 <: a <: t2
-                              (or (set-empty? ubs)
-                                  (set-empty? lbs)
-                                  (not (set-empty? (set-subtract ubs lbs)))))))
-      (values v #t)))
+
+  ;; (define unified-var-tbl (unify-vars! ty #t))
+  (define var-info-tbl (for*/hash : VarInfo
+                                  ([([v : Var] [b : PolarityOcurrence]) (in-hash var-tbl)]
+                                   #:when (and (car b) (cdr b)
+                                               (let ()
+                                                 (match-define (var _ (variable-state _ lbs ubs)) v)
+                                                 ;; if lbs and ubs are non-empty,
+                                                 ;; lbs - ubs is empty, then the variable are complete sandwiched, i.e. t1 <: a <: t2
+                                                 (or (set-empty? ubs)
+                                                     (set-empty? lbs)
+                                                     (not (set-empty? (set-subtract ubs lbs)))))))
+                         (values v #t)))
+  (lambda ([v : Var]) : Boolean
+    (cond
+      [(hash-ref var-info-tbl v #f)
+       #t]
+      [else #f])))
 
 
 (module+ test
   (require typed/rackunit)
   (let ([var-a (var 'a (variable-state 0 null (list (prim 'nat))))])
-    (check-equal? (co-analyze (arrow var-a (prim 'bool)))
-                  (make-immutable-hash)))
+    (define tbl (co-analyze (arrow var-a (prim 'bool))))
+    (check-false (tbl var-a)))
 
   (let ([var-a (var 'a (variable-state 0 null null))])
-    (check-equal? (co-analyze (arrow var-a var-a))
-                  (make-immutable-hash (list (cons var-a #t)))))
+    (define tbl (co-analyze (arrow var-a var-a)))
+    (check-true (tbl var-a)))
+
   (let* ([var-b (var 'b (variable-state 0 null null))]
          [var-a (var 'a (variable-state 0 (list var-b) null))])
     (set-variable-state-lbs! (var-state var-b) (list var-a))

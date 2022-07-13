@@ -90,7 +90,7 @@
   (define union-op (create-merge-op un-fun ubot?))
   (define inter-op (create-merge-op inter-fun utop?))
 
-  (define tbl : VarInfo (co-analyze ty))
+  (define tbl : (-> Var Boolean) (co-analyze ty))
 
   (: go (-> MonoType Boolean UserFacingType))
   (define (go ty polarity)
@@ -112,7 +112,7 @@
          (for/list ([b (in-list bounds)])
            (go b polarity)))
 
-       (define base (if (var-needed? tbl ty)
+       (define base (if (tbl ty)
                         (uvar n)
                         (if polarity (ubot)
                             (utop))))
