@@ -25,6 +25,9 @@
 (define (extend-env env var ty)
   (cons (cons var ty) env))
 
+(define (merge-bounds [a : (Listof MonoType)] [b : (Listof MonoType)]) : (Listof MonoType)
+  (remove-duplicates (append a b)))
+
 
 (struct variable-state ([lvl : Natural]
                         [lbs : (Listof MonoType)]
@@ -171,10 +174,12 @@
 (module+ test
   (require typed/rackunit)
 
+  #;
   (define-syntax-rule (tc given expected)
     (check-equal? (type-infer given (new-env))
                   expected))
 
+  #;
   (define-syntax-rule (tc-alpha given expected)
     (check-true (alpha-eq? (type-infer given (new-env))
                            expected))))

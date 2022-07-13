@@ -56,6 +56,15 @@
 (define (type-infer term)
   (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
 
+;; (coalesce-type
+;;  (do-type-infer #'(lambda (a)
+;;                     (lambda (b)
+;;                       (if #t a
+;;                           b)))
+;;                 (new-env)))
+
+
+
 
 (module+ test
   (require rackunit)
