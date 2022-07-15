@@ -2,42 +2,28 @@
 
 (require racket/match
          racket/list
-         typed/racket/class
          racket/set)
 (provide (all-defined-out))
 
 (define-type MonoType (U Var Prim Arrow Record))
 
+(define-type Env (Listof (Pairof Identifier Type)))
 
-(define-type Env% (Class [lookup (-> Identifier Type)]
-                         [extend (-> Identifier Type Void)]))
-(: env% Env%)
-(define env% (class object%
-               (init)
-               (define eles : (Boxof (Listof (Pairof Identifier Type))) (box (list)))
-               (super-new)
-               (define/public (lookup id)
-                 (cond
-                   [(assoc id (unbox eles) free-identifier=?)
-                    => cdr]
-                   [else (error 'hi "~a is unbound" id)]))
-
-               (define/public (extend id v)
-                 (set-box! eles (cons (cons id v)
-                                      (unbox eles))))))
-
-(: lookup-env (-> (Instance Env%) Identifier Type))
+(: lookup-env (-> Env Identifier Type))
 (define (lookup-env env var)
-  (send env lookup var))
+  (cond
+    [(assoc var env free-identifier=?)
+     =>
+     cdr]
+    [else (error (format "~a is unbound" var))]))
 
-(: new-env (-> (Instance Env%)))
+(: new-env (-> Env))
 (define (new-env)
-  (new env%))
+  null)
 
-(: extend-env (-> (Instance Env%) Identifier Type (Instance Env%)))
+(: extend-env (-> Env Identifier Type Env))
 (define (extend-env env var ty)
-  (send env extend var ty)
-  env)
+  (cons (cons var ty) env))
 
 (define (merge-bounds [a : (Listof MonoType)] [b : (Listof MonoType)]) : (Listof MonoType)
   (remove-duplicates (append a b)))
