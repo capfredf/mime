@@ -42,13 +42,53 @@
 (define (merge-bounds [a : (Listof MonoType)] [b : (Listof MonoType)]) : (Listof MonoType)
   (remove-duplicates (append a b)))
 
-
 (struct variable-state ([lvl : Natural]
                         [lbs : (Listof MonoType)]
                         [ubs : (Listof MonoType)])
   #:type-name VariableState
   #:transparent
   #:mutable)
+
+(define-type MonoType% (Class [get-type-level (-> Natural)]
+                              [freshen (-> Natural Natural (Instance MonoType%))]))
+
+(define-type Var% (Class (init [uniq-name Symbol]
+                               [level Natural]
+                               [upperbounds (Listof (Instance MonoType%))]
+                               [lowerbounds (Listof (Instance MonoType%))])
+                         #:implements MonoType%))
+
+(: var% Var%)
+(define var% (class object%
+               (super-new)
+               (init uniq-name level upperbounds
+                     lowerbounds)
+
+               (define name : Symbol uniq-name)
+
+               (define lvl : Natural level)
+
+               (define ubs : (Listof (Instance MonoType%)) upperbounds)
+
+               (define lbs : (Listof (Instance MonoType%)) lowerbounds)
+
+               (define/public (get-type-level)
+                 lvl)
+
+               ;; (: fmap-bounds (-> MonoType MonoType))
+               ;; (define (fmap-bounds op bounds))
+
+               (define/public (freshen poly-lvl current-lvl)
+                 (if (< poly-lvl lvl)
+                     (new var%
+                          [uniq-name name]
+                          [level current-lvl]
+                          [upperbounds (map (lambda ([a : (Instance MonoType%)])
+                                              (send a freshen poly-lvl current-lvl))
+                                            ubs)]
+                          [lowerbounds lbs])
+                     this))))
+
 (struct var ([uniq-name : Symbol] [state : VariableState]) #:type-name Var #:transparent)
 (struct arrow ([arg-type : MonoType] [ret-type : MonoType]) #:type-name Arrow #:transparent)
 (struct prim ([name : Symbol]) #:type-name Prim #:transparent)
