@@ -3,8 +3,6 @@
 (require racket/match
          racket/list
          typed/racket/class
-         syntax/parse/define
-         (for-syntax  racket/syntax racket/base)
          racket/set)
 (provide (all-defined-out))
 
@@ -51,11 +49,6 @@
   #:transparent
   #:mutable)
 
-(define-syntax-parser define-class-instance-types
-  [(_ class-type-name:id cls-type-def)
-   #:do [(define ins-type-name (format-id #'class-type-name ""))]
-   #'(begin (define-type class-type-name cld-type-def))])
-
 (define-type MonoType% (Class [get-type-level (-> Natural)]
                               [freshen (-> Natural Natural (Instance MonoType%))]))
 
@@ -63,10 +56,7 @@
                                [level Natural]
                                [upperbounds (Listof (Instance MonoType%))]
                                [lowerbounds (Listof (Instance MonoType%))])
-                         [add-lower-bounds (-> (Instance MonoType%) Void)]
-                         [add-upper-bounds (-> (Instance MonoType%) Void)]
                          #:implements MonoType%))
-(define-type Var (Instance Var%))
 
 (: var% Var%)
 (define var% (class object%
@@ -78,16 +68,9 @@
 
                (define lvl : Natural level)
 
-               (define ubs : (Boxof (Listof (Instance MonoType%))) (box upperbounds))
+               (define ubs : (Listof (Instance MonoType%)) upperbounds)
 
-               (define lbs : (Boxof (Listof (Instance MonoType%))) (box lowerbounds))
-
-
-               (define/public (add-lower-bounds delta)
-                 (set-box! lbs (cons delta (unbox lbs))))
-
-               (define/public (add-upper-bounds delta)
-                 (set-box! ubs (cons delta (unbox ubs))))
+               (define lbs : (Listof (Instance MonoType%)) lowerbounds)
 
                (define/public (get-type-level)
                  lvl)
@@ -102,8 +85,8 @@
                           [level current-lvl]
                           [upperbounds (map (lambda ([a : (Instance MonoType%)])
                                               (send a freshen poly-lvl current-lvl))
-                                            (unbox ubs))]
-                          [lowerbounds (unbox lbs)])
+                                            ubs)]
+                          [lowerbounds lbs])
                      this))))
 
 (struct var ([uniq-name : Symbol] [state : VariableState]) #:type-name Var #:transparent)
@@ -114,20 +97,17 @@
 
 (struct poly-type ([level : Natural] [body : MonoType]) #:transparent #:type-name PolyType)
 
-(: type-level (-> (U Type Var%) Natural))
+(: type-level (-> Type Natural))
 (define (type-level type)
-  (cond
-    [(is-a? type var%) (send type get-type-level)]
-    [else
-     (match type
-       [(var _ (variable-state lvl _ _)) lvl]
-       [(arrow arg-type ret-type) (max (type-level arg-type) (type-level ret-type))]
-       [(? prim?) 0]
-       [(record fs) ((inst argmax Natural)
-                     (lambda (x) x)
-                     (map (lambda ([x : (Pairof Symbol MonoType)])
-                            (type-level (cdr x)))
-                          fs))])]))
+  (match type
+    [(var _ (variable-state lvl _ _)) lvl]
+    [(arrow arg-type ret-type) (max (type-level arg-type) (type-level ret-type))]
+    [(? prim?) 0]
+    [(record fs) ((inst argmax Natural)
+                  (lambda (x) x)
+                  (map (lambda ([x : (Pairof Symbol MonoType)])
+                         (type-level (cdr x)))
+                       fs))]))
 
 (define (freshen-above [ty : PolyType] [level : Natural]) : Type
   (match-define (poly-type lvl b) ty)
@@ -164,7 +144,7 @@
 
 
 (define (fresh-var! [debug-name : Symbol] [lvl : Natural 0]) : Var
-  (make-object var% (gensym debug-name) lvl null null))
+  (var (gensym debug-name) (variable-state lvl null null)))
 
 (define-type Cache (Setof (Pairof MonoType MonoType)))
 
