@@ -149,17 +149,17 @@
 
 (module+ test
   (require typed/rackunit)
-  (let ([var-a (var 'a (variable-state 0 null (list (prim 'nat))))])
+  (let ([var-a (make-object var% 'a 0 null (list (prim 'nat)))])
     (define tbl (co-analyze (arrow var-a (prim 'bool))))
     (check-false (tbl var-a)))
 
-  (let ([var-a (var 'a (variable-state 0 null null))])
+  (let ([var-a (make-object var% 'a 0 null null)])
     (define tbl (co-analyze (arrow var-a var-a)))
     (check-true (tbl var-a)))
 
-  (let* ([var-b (var 'b (variable-state 0 null null))]
-         [var-a (var 'a (variable-state 0 (list var-b) null))])
-    (set-variable-state-lbs! (var-state var-b) (list var-a))
+  (let* ([var-b (make-object var% 'b 0 null null)]
+         [var-a (make-object var% 'a 0 (list var-b) null)])
+    (send var-b add-lower-bounds (list var-a))
     ;; since var-a is cyclic, we use equal? + check-true
     (check-true
      (equal?

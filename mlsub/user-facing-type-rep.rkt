@@ -130,16 +130,13 @@
   (require (submod "..")
            "internal-type-rep.rkt")
   (check-match
-   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
-                                       null)))
+   (coalesce-type (make-object var% 'hi 0 (list (prim 'nat)) null))
    (uprim 'nat))
 
-  (check-equal? (coalesce-type (arrow (var 'hi (variable-state 0 null
-                                                                (list (prim 'nat))))
+  (check-equal? (coalesce-type (arrow (make-object var% 'hi 0 null (list (prim 'nat)))
                                        (prim 'bool)))
                 (uarrow (uprim 'nat) (uprim 'bool)))
-  (let ([v (var 'hi (variable-state 0 null null))])
-    (check-match (coalesce-type (arrow v
-                                  v))
+  (let ([v (make-object var% 'hi 0 null null)])
+    (check-match (coalesce-type (arrow v v))
                  (uarrow (? uvar? a) (? uvar? b))
                  (equal? a b))))
