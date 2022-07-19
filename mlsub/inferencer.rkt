@@ -69,16 +69,20 @@
                             (record (list (cons (syntax-e #'name) ty))))
                       cs))]))
 
-(do-type-infer #'(lambda (x) 10) (new-env))
+;; (do-type-infer #'(lambda (x) 10) (new-env))
 
 (define (type-infer term)
   (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
 
-(do-type-infer #'(lambda (a)
-                   (lambda (b)
-                     (if #t a
-                         b)))
-               (new-env))
+(let-values ([(ty cs) (do-type-infer #'(lambda (a)
+                                         (lambda (b)
+                                           (if #t a
+                                               b)))
+                                     (new-env))])
+  (for ([(k v) (in-hash (constrain cs))])
+    (printf "~a : ~nlower bounds: ~a~nupper bounds ~a ~n~n" k
+            (car v)
+            (cdr v))))
 
 
 

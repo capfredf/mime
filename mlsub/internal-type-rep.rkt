@@ -2,6 +2,7 @@
 
 (require racket/match
          racket/list
+         racket/hash
          racket/set)
 (provide (all-defined-out))
 
@@ -96,15 +97,16 @@
 
 (define-type Constrain (Pairof MonoType MonoType))
 
-(define-type VarConstrainInfo (Immutable-HashTable Var MonoType))
+(define-type VarPolarConstrainInfo (Immutable-HashTable Var (Pairof (Listof MonoType)
+                                                                    (Listof MonoType))))
 
-(: constrain! (->* [(Listof Constrain)]
+(: constrain (->* [(Listof Constrain)]
                    [Cache]
-                   VarConstrainInfo))
-(define (constrain! cs [seen : Cache (set)])
-  (let loop : VarConstrainInfo
+                   VarPolarConstrainInfo))
+(define (constrain cs [seen : Cache (set)])
+  (let loop : VarPolarConstrainInfo
        ([cs : (Listof Constrain) cs]
-        [output : VarConstrainInfo (make-immutable-hash)]
+        [output : VarPolarConstrainInfo (make-immutable-hash)]
         [seen : Cache (set)])
     (match cs
       [(? null?) output]
@@ -112,37 +114,68 @@
        #:when (set-member? seen h)
        (loop t output seen)]
       [(cons (cons lhs rhs) t)
-       (define (recur [lhs^ : MonoType] [rhs^ : MonoType]) : VarConstrainInfo
+       (define (recur [lhs^ : MonoType] [rhs^ : MonoType]) : VarPolarConstrainInfo
          (loop (cons (cons lhs^ rhs^) t)
                output
                (set-add seen (cons lhs rhs))))
        (match* (lhs rhs)
          [((struct prim [a]) (struct prim [b]))
           #:when (equal? a b)
-          (void)]
+          (loop t output seen)]
          [((struct arrow [p1 r1])
            (struct arrow [p2 r2]))
-          (recur p2 p1)
-          (recur r1 r2)]
+          (hash-union (recur p2 p1)
+                      (recur r1 r2))]
          [((struct record [fs1])
            (struct record [fs2]))
-          (for ([f1 (in-list fs1)])
-            (cond
-              [(assoc (car f1) fs2)
-               =>
-               (lambda (f2)
-                 (recur (cdr f1) (cdr f2)))]
-              [else
-               (error 'hi)]))]
-         [((struct var [_ vs]) rhs) #:when (<= (variable-state-lvl vs) (type-level lhs))
-                                    (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
-                                    (for ([i (in-list (variable-state-lbs vs))])
-                                      (recur i rhs))]
+          (loop
+           (append (for/list : (Listof Constrain)
+                             ([f1 (in-list fs1)])
+                     (cond
+                       [(assoc (car f1) fs2)
+                        =>
+                        (lambda (f2)
+                          (cons (cdr f1) (cdr f2)))]
+                       [else
+                        (error 'hi)]))
+                   t)
+           output
+           seen)]
+         [((struct var [_ vs]) rhs)
+          #:when (<= (variable-state-lvl vs) (type-level lhs))
+          (define output^ : VarPolarConstrainInfo
+            (hash-update output lhs (lambda ([a : (Pairof (Listof MonoType)
+                                                          (Listof MonoType))])
+                                            : (Pairof (Listof MonoType)
+                                              (Listof MonoType))
+                                      (cons (car a) (cons rhs (cdr a))))
+                         (lambda () : (Pairof (Listof MonoType) (Listof MonoType))
+                           (cons null null))))
+          (loop (append
+                 (for/list : (Listof (Pairof MonoType MonoType))
+                           ([i : MonoType (in-list (car (hash-ref output^ lhs (lambda () null))))])
+                   (cons i rhs))
+                 t)
+                output^
+                seen)]
 
-         [(lhs (struct var [_ vs])) #:when (<= (type-level lhs) (variable-state-lvl vs))
-                                    (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
-                                    (for ([i (in-list (variable-state-ubs vs))])
-                                      (recur lhs i))]
+         [(lhs (struct var [_ vs]))
+          #:when (<= (type-level lhs) (variable-state-lvl vs))
+          (define output^ : VarPolarConstrainInfo
+            (hash-update output rhs (lambda ([a : (Pairof (Listof MonoType)
+                                                          (Listof MonoType))])
+                                            : (Pairof (Listof MonoType)
+                                                      (Listof MonoType))
+                                      (cons (cons lhs (car a)) (cdr a)))
+                         (lambda () : (Pairof (Listof MonoType) (Listof MonoType))
+                           (cons null null))))
+          (loop (append
+                 (for/list : (Listof (Pairof MonoType MonoType))
+                           ([i : MonoType (in-list (car (hash-ref output^ rhs (lambda () null))))])
+                   (cons i lhs))
+                 t)
+                output^
+                seen)]
 
          [((? var? lhs) rhs)
           (recur lhs (extrude rhs #f (type-level lhs)))]
