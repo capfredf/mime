@@ -3,7 +3,7 @@
          racket/match
          racket/list
          "internal-type-rep.rkt"
-         "user-facing-type-rep.rkt"
+;;         "user-facing-type-rep.rkt"
          syntax/id-table
          (for-syntax racket/base))
 (provide (all-defined-out))
@@ -13,29 +13,30 @@
 (define-syntax (sel stx)
   (error 'hi "don't call me"))
 
-(define (do-type-infer term env [lvl 0])
-  (define (recur term [env env] [lvl lvl])
-    (do-type-infer term env lvl))
+(define (do-type-infer term env [lvl 0]  [var-ctbl (make-immutable-hash)])
+  (define (recur term [env env] [lvl lvl] #:var-ctbl [var-ctbl var-ctbl])
+    (do-type-infer term env lvl var-ctbl))
 
   (define-syntax-rule (I expr)
-    (values expr null))
+    (values expr (make-immutable-hash)))
 
   (syntax-parse term
     #:literals (lambda let rcd sel if)
     [var:id
-     (I (instantiate (lookup-env env #'var) lvl))]
+     (define-values (cs ty-v) (instantiate var-ctbl (lookup-env env #'var) lvl))
+     (values ty-v cs)]
     [_:nat
      (I (prim 'nat))]
     [_:boolean
      (I (prim 'bool))]
     [(rcd (f:id e:expr) ...)
-     (define-values (fs constrains)
-       (for/lists (_1 _2 #:result (values _1 (append* _2)))
-                  ([n (syntax->list #'(f ...))]
-                   [e (syntax->list #'(e ...))])
-         (define-values (ty cs) (recur e))
-         (values (cons (syntax-e n) ty) cs)))
-     (values (record fs) constrains)]
+     (for/fold ([fs '()]
+                [var-ctbl var-ctbl]
+                #:result (values (record fs) var-ctbl))
+               ([n (syntax->list #'(f ...))]
+                [e (syntax->list #'(e ...))])
+       (define-values (ty cs) (recur e #:var-ctbl var-ctbl))
+       (values (cons (syntax-e n) ty) cs))]
     [(lambda (x:id) body:expr)
      (define ty^ (fresh-var! 'abs))
      (define-values (ty^^ cs)
@@ -45,48 +46,41 @@
     [(f arg)
      (define ty (fresh-var! 'app))
      (define-values (ty^ cs^) (recur #'f))
-     (define-values (ty^^ cs^^) (recur #'arg))
-     (values ty (append (cons ty^ (arrow ty^^ ty)) cs^ cs^^))]
+     (define-values (ty^^ cs^^) (recur #'arg #:var-ctbl cs^))
+     (values ty (constrain cs^^ ty^ (arrow ty^^ ty)))]
     [(if cond-expr then-expr else-expr)
      (define-values (ty-c cs-c) (recur #'cond-expr))
      (define ty^^ (fresh-var! 'br))
-     (define-values (ty-th cs-th) (recur #'then-expr))
-     (define-values (ty-el cs-el) (recur #'else-expr))
-     (values ty^^ (append (list (cons ty-c (prim 'bool))
-                                (cons ty-th ty^^)
-                                (cons ty-el ty^^))
-                          cs-c
-                          cs-th
-                          cs-el))]
+     (define-values (ty-th cs-th) (recur #'then-expr #:var-ctbl cs-c))
+     (define-values (ty-el cs-el) (recur #'else-expr #:var-ctbl (constrain cs-th ty-th ty^^)))
+     (values ty^^ (constrain cs-el ty-el ty^^))]
     [(let ([x rhs]) body)
      (define-values (ty^ cs-rhs) (recur #'rhs env (add1 lvl)))
-     (define-values (ty^^ cs-b) (recur #'body (extend-env env #'x (poly-type lvl ty^))))
-     (values ty^^ (append cs-rhs cs-b))]
+     (define-values (ty^^ cs-b) (recur #'body (extend-env env #'x (poly-type lvl ty^)) #:var-ctbl cs-rhs))
+     (values ty^^ cs-b)]
     [(sel rcd name)
      (define ty (fresh-var! 'sel))
-     (define-values (ty^^ cs) (recur #'rcd env))
-     (values ty (cons (cons ty^^ 
-                            (record (list (cons (syntax-e #'name) ty))))
-                      cs))]))
+     (define-values (ty^^ cs) (recur #'rcd env #:var-ctbl var-ctbl))
+     (values ty (constrain cs ty^^ (record (list (cons syntax-e #'name) ty))))]))
 
 ;; (do-type-infer #'(lambda (x) 10) (new-env))
 
-(define (type-infer term)
-  (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
+;; (define (type-infer term)
+;;   (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
 
 (let-values ([(ty cs) (do-type-infer #'(lambda (a)
                                          (lambda (b)
                                            (if #t a
                                                b)))
                                      (new-env))])
-  (for ([(k v) (in-hash (constrain cs))])
-    (printf "~a : ~nlower bounds: ~a~nupper bounds ~a ~n~n" k
-            (car v)
-            (cdr v))))
+  (for ([(k v) (in-hash cs)])
+    (printf "~a : ~nconstrain state ~a ~n~n" k
+            v)))
 
 
 
 
+#;
 (module+ test
   (require rackunit)
 
