@@ -94,51 +94,63 @@
 
 (define-type Cache (Setof (Pairof MonoType MonoType)))
 
-(: constrain! (->* [MonoType MonoType]
+(define-type Constrain (Pairof MonoType MonoType))
+
+(define-type VarConstrainInfo (Immutable-HashTable Var MonoType))
+
+(: constrain! (->* [(Listof Constrain)]
                    [Cache]
-                   Void))
-(define (constrain! lhs rhs [seen : Cache (set)]) : Void
-  (cond
-    [(set-member? seen (cons lhs rhs))
-     (void)]
-    [else
-     (define (recur [lhs^ : MonoType] [rhs^ : MonoType]) : Void
-       (constrain! lhs^ rhs^ (set-add seen (cons lhs rhs))))
-     (match* (lhs rhs)
-       [((struct prim [a]) (struct prim [b]))
-        #:when (equal? a b)
-        (void)]
-       [((struct arrow [p1 r1])
-         (struct arrow [p2 r2]))
-        (recur p2 p1)
-        (recur r1 r2)]
-       [((struct record [fs1])
-         (struct record [fs2]))
-        (for ([f1 (in-list fs1)])
-          (cond
-            [(assoc (car f1) fs2)
-             =>
-             (lambda (f2)
-               (recur (cdr f1) (cdr f2)))]
-            [else
-             (error 'hi)]))]
-       [((struct var [_ vs]) rhs) #:when (<= (variable-state-lvl vs) (type-level lhs))
-                                  (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
-                                  (for ([i (in-list (variable-state-lbs vs))])
-                                    (recur i rhs))]
+                   VarConstrainInfo))
+(define (constrain! cs [seen : Cache (set)])
+  (let loop : VarConstrainInfo
+       ([cs : (Listof Constrain) cs]
+        [output : VarConstrainInfo (make-immutable-hash)]
+        [seen : Cache (set)])
+    (match cs
+      [(? null?) output]
+      [(cons h t)
+       #:when (set-member? seen h)
+       (loop t output seen)]
+      [(cons (cons lhs rhs) t)
+       (define (recur [lhs^ : MonoType] [rhs^ : MonoType]) : VarConstrainInfo
+         (loop (cons (cons lhs^ rhs^) t)
+               output
+               (set-add seen (cons lhs rhs))))
+       (match* (lhs rhs)
+         [((struct prim [a]) (struct prim [b]))
+          #:when (equal? a b)
+          (void)]
+         [((struct arrow [p1 r1])
+           (struct arrow [p2 r2]))
+          (recur p2 p1)
+          (recur r1 r2)]
+         [((struct record [fs1])
+           (struct record [fs2]))
+          (for ([f1 (in-list fs1)])
+            (cond
+              [(assoc (car f1) fs2)
+               =>
+               (lambda (f2)
+                 (recur (cdr f1) (cdr f2)))]
+              [else
+               (error 'hi)]))]
+         [((struct var [_ vs]) rhs) #:when (<= (variable-state-lvl vs) (type-level lhs))
+                                    (set-variable-state-ubs! vs (cons rhs (variable-state-ubs vs)))
+                                    (for ([i (in-list (variable-state-lbs vs))])
+                                      (recur i rhs))]
 
-       [(lhs (struct var [_ vs])) #:when (<= (type-level lhs) (variable-state-lvl vs))
-                                  (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
-                                  (for ([i (in-list (variable-state-ubs vs))])
-                                    (recur lhs i))]
+         [(lhs (struct var [_ vs])) #:when (<= (type-level lhs) (variable-state-lvl vs))
+                                    (set-variable-state-lbs! vs (cons lhs (variable-state-lbs vs)))
+                                    (for ([i (in-list (variable-state-ubs vs))])
+                                      (recur lhs i))]
 
-       [((? var? lhs) rhs)
-        (recur lhs (extrude rhs #f (type-level lhs)))]
+         [((? var? lhs) rhs)
+          (recur lhs (extrude rhs #f (type-level lhs)))]
 
-       [(lhs (? var? rhs))
-        (recur (extrude lhs #t (type-level rhs)) rhs)]
-       [(_ _)
-        (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])]))
+         [(lhs (? var? rhs))
+          (recur (extrude lhs #t (type-level rhs)) rhs)]
+         [(_ _)
+          (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])])))
 
 (define (extrude [ty : MonoType] [polarity : Boolean] [level : Natural]) : MonoType
   ;; todo: handle recurive types

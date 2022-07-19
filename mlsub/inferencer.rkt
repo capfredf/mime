@@ -1,8 +1,10 @@
 #lang racket/base
 (require syntax/parse
          racket/match
+         racket/list
          "internal-type-rep.rkt"
          "user-facing-type-rep.rkt"
+         syntax/id-table
          (for-syntax racket/base))
 (provide (all-defined-out))
 (define-syntax (rcd stx)
@@ -15,53 +17,68 @@
   (define (recur term [env env] [lvl lvl])
     (do-type-infer term env lvl))
 
+  (define-syntax-rule (I expr)
+    (values expr null))
+
   (syntax-parse term
     #:literals (lambda let rcd sel if)
     [var:id
-     (instantiate (lookup-env env #'var) lvl)]
+     (I (instantiate (lookup-env env #'var) lvl))]
     [_:nat
-     (prim 'nat)]
+     (I (prim 'nat))]
     [_:boolean
-     (prim 'bool)]
+     (I (prim 'bool))]
     [(rcd (f:id e:expr) ...)
-     (record (map (lambda (n e)
-                    (cons (syntax-e n) (recur e)))
-                  (syntax->list #'(f ...))
-                  (syntax->list #'(e ...))))]
+     (define-values (fs constrains)
+       (for/lists (_1 _2 #:result (values _1 (append* _2)))
+                  ([n (syntax->list #'(f ...))]
+                   [e (syntax->list #'(e ...))])
+         (define-values (ty cs) (recur e))
+         (values (cons (syntax-e n) ty) cs)))
+     (values (record fs) constrains)]
     [(lambda (x:id) body:expr)
      (define ty^ (fresh-var! 'abs))
-     (arrow ty^ (recur #'body
-                       (extend-env env #'x ty^)))]
+     (define-values (ty^^ cs)
+       (recur #'body
+              (extend-env env #'x ty^)))
+     (values (arrow ty^ ty^^) cs)]
     [(f arg)
      (define ty (fresh-var! 'app))
-     (constrain! (recur #'f)
-                 (arrow (recur #'arg) ty))
-     ty]
+     (define-values (ty^ cs^) (recur #'f))
+     (define-values (ty^^ cs^^) (recur #'arg))
+     (values ty (append (cons ty^ (arrow ty^^ ty)) cs^ cs^^))]
     [(if cond-expr then-expr else-expr)
-     (constrain! (recur #'cond-expr)
-                 (prim 'bool))
+     (define-values (ty-c cs-c) (recur #'cond-expr))
      (define ty^^ (fresh-var! 'br))
-     (constrain! (recur #'then-expr) ty^^)
-     (constrain! (recur #'else-expr) ty^^)
-     ty^^]
+     (define-values (ty-th cs-th) (recur #'then-expr))
+     (define-values (ty-el cs-el) (recur #'else-expr))
+     (values ty^^ (append (list (cons ty-c (prim 'bool))
+                                (cons ty-th ty^^)
+                                (cons ty-el ty^^))
+                          cs-c
+                          cs-th
+                          cs-el))]
     [(let ([x rhs]) body)
-     (define ty^ (recur #'rhs env (add1 lvl)))
-     (recur #'body (extend-env env #'x (poly-type lvl ty^)))]
+     (define-values (ty^ cs-rhs) (recur #'rhs env (add1 lvl)))
+     (define-values (ty^^ cs-b) (recur #'body (extend-env env #'x (poly-type lvl ty^))))
+     (values ty^^ (append cs-rhs cs-b))]
     [(sel rcd name)
      (define ty (fresh-var! 'sel))
-     (constrain! (recur #'rcd env)
-                 (record (list (cons (syntax-e #'name) ty))))
-     ty]))
+     (define-values (ty^^ cs) (recur #'rcd env))
+     (values ty (cons (cons ty^^ 
+                            (record (list (cons (syntax-e #'name) ty))))
+                      cs))]))
+
+(do-type-infer #'(lambda (x) 10) (new-env))
 
 (define (type-infer term)
   (uty->sexp (coalesce-type (do-type-infer term (new-env)))))
 
-;; (coalesce-type
-;;  (do-type-infer #'(lambda (a)
-;;                     (lambda (b)
-;;                       (if #t a
-;;                           b)))
-;;                 (new-env)))
+(do-type-infer #'(lambda (a)
+                   (lambda (b)
+                     (if #t a
+                         b)))
+               (new-env))
 
 
 
