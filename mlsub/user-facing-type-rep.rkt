@@ -139,11 +139,13 @@
      (coalesce-type cstbl var1))
    (uprim 'nat))
 
-  #;
-  (check-equal? (coalesce-type (arrow (var 'hi (variable-state 0 null
-                                                                (list (prim 'nat))))
-                                       (prim 'bool)))
-                (uarrow (uprim 'nat) (uprim 'bool)))
+  (let* ([var1 (var 'hi 0)]
+         [cstbl (update-var-constrain (new-var-constrain)
+                                      var1
+                                      #f
+                                      (prim 'nat))])
+    (check-equal? (coalesce-type cstbl (arrow var1 (prim 'bool)))
+                  (uarrow (uprim 'nat) (uprim 'bool))))
   #;
   (let ([v (var 'hi (variable-state 0 null null))])
     (check-match (coalesce-type (arrow v
