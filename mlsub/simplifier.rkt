@@ -13,6 +13,83 @@
 (define-type VarInfo (Immutable-HashTable Var Boolean))
 
 
+(struct compact-arrow ([param : CompactType]
+                       [ret : CompactType])
+  #:type-name CompactArrow
+  #:transparent)
+
+(define-type CompactRecord (Pairof Symbol CompactType))
+
+(struct compact-type ([vars : (Setof Var)]
+                      [prims : (Setof Prim)]
+                      [arrow : (Option CompactArrow)]
+                      [record : (Option (Pairof Symbol CompactType))])
+  #:transparent
+  #:type-name CompactType
+  #:constructor-name make-compact-type)
+
+(define (make-ct #:vars [vars : (Setof Var) (set)]
+                 #:prims [prims : (Setof Prim) (set)]
+                 #:arrow [arr : (Option CompactArrow) #f]
+                 #:record [rcd : (Option CompactRecord) #f]) : CompactType
+  (make-compact-type vars
+                     prims
+                     arr
+                     rcd))
+
+(define (merge-compact-type [ct1 : CompactType] [ct2 : CompactType]) : CompactType
+  (: merge (All (A) (-> (Option A) (Option A) (-> A A A) (Option A))))
+  (define (merge ct1 ct2 f)
+    (match* (ct1 ct2)
+      [(#f #f) #f]
+      [(#f a) a]
+      [(a #f) a]
+      [(a b)
+       #:when (and a b) ;; Err, without the expresion, TR can't recognize that a and b are not #f
+       (f a b)]))
+
+  (make-compact-type (set-union (compact-type-vars ct1)
+                                (compact-type-vars ct2))
+                     (set-union (compact-type-prims ct1)
+                                (compact-type-prims ct2))
+                     (merge (compact-type-arrow ct1)
+                            (compact-type-arrow ct2)
+                            (lambda ([a : CompactArrow] [b : CompactArrow]) : CompactArrow
+                              (match* (a b)
+                                [((compact-arrow p1 r1) (compact-arrow p2 r2))
+                                 (compact-arrow (merge-compact-type p1 p2)
+                                                (merge-compact-type r1 r2))])))
+                     (merge (compact-type-record ct1)
+                            (compact-type-record ct2)
+                            (lambda ([a : CompactRecord] [b : CompactRecord]) : CompactRecord
+                              (error 'merge "not implemented for records")))))
+
+(define (mono-type->compact-type [vctbl : VarPolarConstrainInfo] [ty : MonoType] [polar : Boolean]) : CompactType
+  (let loop : CompactType ([ty : MonoType ty]
+                           [output : CompactType (make-ct)])
+    (match ty
+      [(? prim?) (make-ct #:prims (set ty))]
+      [(? var? v)
+       (define lbs (var-bounds vctbl v #t))
+       (define ubs (var-bounds vctbl v #f))
+       ;; if either lbs or ubs is empty, then it is *not* needed
+       ;; if
+       (define needed?
+         (or
+           (and (empty? lbs) (empty? ubs))
+           (and (not (set-empty? (set-subtract (list->set lbs)
+                                               (list->set ubs)))))))
+       (cond
+         [needed?
+          (make-ct #:vars (set v))]
+         [else
+          (for/fold ([output : CompactType output])
+                    ([i (in-list (if polar lbs ubs))])
+            (merge-compact-type (loop i (make-ct)) output))])]
+      [(arrow param-ty ret-ty)
+       (make-ct #:arrow (compact-arrow (loop param-ty (make-ct))
+                                       (loop ret-ty (make-ct))))])))
+
 (: co-occur? (-> VarPolarConstrainInfo Var Boolean MonoType Boolean))
 (define (co-occur? var-ctbl ty1 polar ty2)
   (match ty2
@@ -126,13 +203,29 @@
        #t]
       [else #f])))
 
-
 (module+ test
   (require typed/rackunit)
-  (let ([var-a (var 'a 0)]
-        [vctbl (new-var-constrain)])
-    (define tbl (co-analyze vctbl (arrow var-a (prim 'bool))))
-    (check-false (tbl var-a)))
+
+  (let* ([var-a (var 'a 0)]
+         [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))])
+    (check-equal? (mono-type->compact-type vctbl var-a #f)
+                  (make-ct #:prims (set (prim 'bool)))))
+
+  ;; r & (a -> b)  & ( b -> c ) -> a -> c
+  (let* ([var-r (var 'r 0)]
+         [var-a (var 'a 0)]
+         [var-b (var 'b 0)]
+         [var-c (var 'c 0)]
+         [f1 (arrow var-r (arrow var-a var-c))]
+         [f2 (arrow var-a var-b)]
+         [f3 (arrow var-b var-c)]
+         [vctbl (update-var-constrain (new-var-constrain) var-r #f f2)]
+         [vctbl (update-var-constrain vctbl var-r #f f3)])
+    (check-equal? (mono-type->compact-type vctbl f1 #f)
+                  (make-ct #:arrow (compact-arrow (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a var-b))
+                                                                                  (make-ct #:vars (set var-b var-c))))
+                                                  (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a))
+                                                                                  (make-ct #:vars (set var-c))))))))
 
   (let ([var-a (var 'a 0)]
         [vctbl (new-var-constrain)])
@@ -151,7 +244,15 @@
      (equal?
       (car (hash-ref mapping
                      var-b))
-      var-a))
-    #;
-    (check-equal? ()
-                  (u))))
+      var-a)))
+
+  (let ([var-a (var 'a 0)]
+        [vctbl (new-var-constrain)])
+    (define tbl (co-analyze vctbl (arrow var-a var-a)))
+    (check-true (tbl var-a)))
+
+  (let* ([var-a (var 'a 0)]
+         [var-b (var 'b 0)]
+         [var-r (var 'r 0)]
+         [var-d (var 'd 0)])
+    (void)))
