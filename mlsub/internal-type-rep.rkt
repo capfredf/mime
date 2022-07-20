@@ -116,6 +116,7 @@
   #:constructor-name make-constrain-state
   #:transparent)
 (define-type VarPolarConstrainInfo (Immutable-HashTable VarSym ConstrainState))
+(define-type Mutable-VarPolarConstrainInfo (Mutable-HashTable VarSym ConstrainState))
 
 (define (update-var-constrain [var-ctbl : VarPolarConstrainInfo] [var : Var] [polar : Boolean] [v : MonoType])
         : VarPolarConstrainInfo
@@ -191,44 +192,53 @@
           (loop acc lhs i seen))]
 
        [((? var? lhs) rhs)
-        (recur lhs (extrude rhs #f (type-level lhs)))]
+        (define-values (ty var-ctbl^) (extrude var-ctbl rhs #f (type-level lhs)))
+        (loop var-ctbl^ lhs ty seen)]
 
        [(lhs (? var? rhs))
-        (recur (extrude lhs #t (type-level rhs)) rhs)]
+        (define-values (ty var-ctbl^) (extrude var-ctbl lhs #t (type-level rhs)))
+        (loop var-ctbl^ ty rhs seen)]
        [(_ _)
         (error 'contrain "unable to constrain ~a <: ~a" lhs rhs)])]))
 
-(define (extrude [ty : MonoType] [polarity : Boolean] [level : Natural]) : MonoType
-  ;; todo: handle recurive types
-  (error 'hi)
-  #;
-  (let recur : MonoType ([ty : MonoType ty]
-                         [polarity : Boolean polarity])
+(define (extrude [var-cs : VarPolarConstrainInfo] [ty : MonoType] [polarity : Boolean] [level : Natural]) : (values MonoType VarPolarConstrainInfo)
+  (define var-cs* : Mutable-VarPolarConstrainInfo
+    (make-hash (map (inst cons VarSym ConstrainState) (hash-keys var-cs)
+                    (hash-values var-cs))))
+  (let recur : (Values MonoType VarPolarConstrainInfo)
+       ([ty : MonoType ty]
+        [polarity : Boolean polarity]
+        [var-cs : VarPolarConstrainInfo var-cs])
     (cond
       [(< (type-level ty) level)
-       ty]
+       (values ty var-cs)]
       [else
        (match ty
-         [(? prim?) ty]
+         [(? prim?) (values ty var-cs)]
          [(arrow arg-ty ret-ty)
-          (arrow (recur arg-ty (not polarity))
-                 (recur ret-ty polarity))]
+          (let-values ([(ty var-cs) (recur arg-ty (not polarity) var-cs)])
+            (define-values (ty^ var-cs^) (recur ret-ty polarity var-cs))
+            (values (arrow ty ty^)
+                    var-cs^))]
          [(? record?)
-          (fmap-record ty (lambda ([x : MonoType])
-                            (recur x polarity)))]
-         [(var _ (and (variable-state _ lbs ubs) vs))
+          (values (fmap-record ty (lambda ([x : MonoType])
+                                    (recur x polarity)))
+                  var-cs)]
+         [(? var v)
           (define nvar (fresh-var! 'nvs level))
-          (match-define (var _ nvs) nvar)
-          (cond
-            [polarity
-             (set-variable-state-ubs! vs (cons nvar ubs))
-             (set-variable-state-lbs! nvs (for/list ([i (in-list lbs)])
-                                            (recur i polarity)))]
-            [else
-             (set-variable-state-lbs! vs (cons nvar lbs))
-             (set-variable-state-ubs! nvs (for/list ([i (in-list ubs)])
-                                            (recur i (not polarity))))])
-          nvar])])))
+          (values nvar
+                  (cond
+                    [polarity
+                     (for/fold : VarPolarConstrainInfo
+                               ([acc : VarPolarConstrainInfo (update-var-constrain var-cs v #f nvar)])
+                               ([i (in-list (var-bounds var-cs v #t))])
+                       (define ty^ (recur i polarity acc))
+                       (update-var-constrain var-cs nvar #t ty^))]
+                    [else
+                     (for/fold ([acc : VarPolarConstrainInfo (update-var-constrain var-cs v #t nvar)])
+                               ([i (in-list (var-bounds var-cs v #f))])
+                       (define ty^ (recur i polarity acc))
+                       (update-var-constrain var-cs nvar #f ty^))]))])])))
 
 
 (module+ test
