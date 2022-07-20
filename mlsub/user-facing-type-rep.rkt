@@ -1,6 +1,6 @@
 #lang typed/racket/base
 (require "internal-type-rep.rkt"
-         "simplifier.rkt"
+         ;; "simplifier.rkt"
          racket/match
          racket/list
          racket/set)
@@ -10,7 +10,6 @@
 (define-type UserFacingType (U UVar UPrim UArrow URecord UTop UBot UInter UUnion))
 
 
-(struct polar-var ([vs : VariableState] [st : Boolean]) #:type-name PolarVariable #:transparent)
 (struct utop () #:type-name UTop #:transparent)
 (struct ubot () #:type-name UBot #:transparent)
 (struct uunion ([lhs : UserFacingType] [rhs : UserFacingType]) #:type-name UUnion #:transparent)
@@ -63,7 +62,7 @@
        (produce-beatiful-var n)])))
 
 
-(define (coalesce-type [ty : MonoType]) : UserFacingType
+(define (coalesce-type [var-ctbl : VarPolarConstrainInfo] [ty : MonoType]) : UserFacingType
   ;; todo a table to track recurive type vars.
 
   (define ((create-merge-op [op : (-> UserFacingType UserFacingType UserFacingType)]
@@ -90,7 +89,9 @@
   (define union-op (create-merge-op un-fun ubot?))
   (define inter-op (create-merge-op inter-fun utop?))
 
-  (define tbl : (-> Var Boolean) (co-analyze ty))
+  ;; (define tbl : (-> Var Boolean) (co-analyze ty))
+
+  (define tbl (lambda (x) #f))
 
   (: go (-> MonoType Boolean UserFacingType))
   (define (go ty polarity)
@@ -103,11 +104,11 @@
       [(struct record [fs])
        (urecord (for/list ([i (in-list fs)])
                   (cons (car i) (go (cdr i) polarity))))]
-      [(struct var [n vs])
+      [(and (var n _) v)
        ;; todo handle recursive variables
        (define-values (bounds merge-op)
-         (if polarity (values (variable-state-lbs vs) union-op)
-             (values (variable-state-ubs vs) inter-op)))
+         (if polarity (values (var-bounds var-ctbl v #t) union-op)
+             (values (var-bounds var-ctbl v #f) inter-op)))
        (define bound-types : (Listof UserFacingType)
          (for/list ([b (in-list bounds)])
            (go b polarity)))
@@ -130,14 +131,20 @@
   (require (submod "..")
            "internal-type-rep.rkt")
   (check-match
-   (coalesce-type (var 'hi (variable-state 0 (list (prim 'nat))
-                                       null)))
+   (let* ([var1 (var 'hi 0)]
+          [cstbl (update-var-constrain (new-var-constrain)
+                                       var1
+                                       #t
+                                       (prim 'nat))])
+     (coalesce-type cstbl var1))
    (uprim 'nat))
 
+  #;
   (check-equal? (coalesce-type (arrow (var 'hi (variable-state 0 null
                                                                 (list (prim 'nat))))
                                        (prim 'bool)))
                 (uarrow (uprim 'nat) (uprim 'bool)))
+  #;
   (let ([v (var 'hi (variable-state 0 null null))])
     (check-match (coalesce-type (arrow v
                                   v))

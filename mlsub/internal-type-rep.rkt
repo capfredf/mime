@@ -123,6 +123,9 @@
 (define-type VarPolarConstrainInfo (Immutable-HashTable VarSym ConstrainState))
 (define-type Mutable-VarPolarConstrainInfo (Mutable-HashTable VarSym ConstrainState))
 
+(define (new-var-constrain)
+  (make-immutable-hash))
+
 (define (update-var-constrain [var-ctbl : VarPolarConstrainInfo] [var : Var] [polar : Boolean] [v : MonoType])
         : VarPolarConstrainInfo
   (hash-update var-ctbl (var-name var) (lambda ([a : ConstrainState]) : ConstrainState
