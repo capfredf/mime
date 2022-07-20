@@ -1,6 +1,6 @@
 #lang typed/racket/base
 (require "internal-type-rep.rkt"
-         ;; "simplifier.rkt"
+         "simplifier.rkt"
          racket/match
          racket/list
          racket/set)
@@ -89,9 +89,7 @@
   (define union-op (create-merge-op un-fun ubot?))
   (define inter-op (create-merge-op inter-fun utop?))
 
-  ;; (define tbl : (-> Var Boolean) (co-analyze ty))
-
-  (define tbl (lambda (x) #f))
+  (define tbl : (-> Var Boolean) (co-analyze var-ctbl ty))
 
   (: go (-> MonoType Boolean UserFacingType))
   (define (go ty polarity)
@@ -146,9 +144,10 @@
                                       (prim 'nat))])
     (check-equal? (coalesce-type cstbl (arrow var1 (prim 'bool)))
                   (uarrow (uprim 'nat) (uprim 'bool))))
-  #;
-  (let ([v (var 'hi (variable-state 0 null null))])
-    (check-match (coalesce-type (arrow v
-                                  v))
+
+  (let ([v (var 'hi 0)]
+        [vctbl (new-var-constrain)])
+    (check-match (coalesce-type vctbl
+                                (arrow v v))
                  (uarrow (? uvar? a) (? uvar? b))
                  (equal? a b))))

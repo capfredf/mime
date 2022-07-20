@@ -123,7 +123,7 @@
 (define-type VarPolarConstrainInfo (Immutable-HashTable VarSym ConstrainState))
 (define-type Mutable-VarPolarConstrainInfo (Mutable-HashTable VarSym ConstrainState))
 
-(define (new-var-constrain)
+(define (new-var-constrain) : VarPolarConstrainInfo
   (make-immutable-hash))
 
 (define (update-var-constrain [var-ctbl : VarPolarConstrainInfo] [var : Var] [polar : Boolean] [v : MonoType])
@@ -140,10 +140,14 @@
                  (make-constrain-state (var-level var) null null))))
 
 (define (var-bounds [var-ctbl : VarPolarConstrainInfo] [var : Var] [polar : Boolean]) : Bounds
-  (define a (hash-ref var-ctbl (var-name var)))
-  (if polar
-      (constrain-state-lowerbounds a)
-      (constrain-state-upperbounds a)))
+  (cond
+    [(hash-ref var-ctbl (var-name var) #f)
+     =>
+     (lambda (a)
+       (if polar
+           (constrain-state-lowerbounds a)
+           (constrain-state-upperbounds a)))]
+    [else null]))
 
 (: constrain (->* [VarPolarConstrainInfo MonoType MonoType]
                   [Cache]
