@@ -343,11 +343,10 @@
     (define combined-var (for/fold : UserFacingType
                                    ([acc : UserFacingType base])
                                    ([v (in-list (set->list vars))])
-                           acc
-                           #;
-                           (if (lookup v polarity)
-                               (merge-op (uvar (var-name v)) acc)
-                               acc)))
+                           (if (not-needed? polar-mapping v)
+                               acc
+                               (let ([v^ (unify-var! unified-var-mapping v polarity)])
+                                 (merge-op (uvar (var-name v^)) acc)))))
 
     (define combined-prim (foldl merge-op base (map (compose uprim prim-name) (set->list prims))))
 
@@ -407,7 +406,6 @@
     (define-values (polar-mapping unified-var-mapping) (co-analyze lhs))
     (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
     (check-equal? (not-needed? polar-mapping var-a) #t)
-    #;
     (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
   (let* ([var-a (var 'a 0)]
@@ -419,7 +417,6 @@
                                                       (make-ct #:prims (set (prim 'bool))))))
     (define-values (polar-mapping unified-var-mapping) (co-analyze lhs))
     (check-equal? (not-needed? polar-mapping var-a) #t)
-    #;
     (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
@@ -447,7 +444,6 @@
         (check-equal? t2 t1)
         (let ([t (unify-var! unified-var-mapping var-c #t)])
           (check-equal? t var-c))))
-    #;
     (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'b) (uvar 'a))
                                                            (uvar 'b))
                                                    (uarrow (uvar 'a)
