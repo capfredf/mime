@@ -89,11 +89,42 @@
   (define union-op (create-merge-op un-fun ubot?))
   (define inter-op (create-merge-op inter-fun utop?))
 
-  (define tbl : (-> Var Boolean) (co-analyze var-ctbl ty))
+  (define cty (mono->compact var-ctbl ty))
 
-  (: go (-> MonoType Boolean UserFacingType))
-  (define (go ty polarity)
-    (match ty
+  (define lookup (co-analyze var-ctbl cty))
+
+  (: go (-> CompactType Boolean UserFacingType))
+  (define (go cty polarity)
+    (match-define (compact-type vars prims opt-arr opt-rcd) cty)
+
+    (define merge-op (if polarity union-op inter-op))
+    (define base (if polarity (ubot) (utop)))
+    (define combined-var (for/fold : UserFacingType
+                                   ([acc : UserFacingType base])
+                                   ([v (in-list (set->list vars))])
+                           (if (lookup v polarity)
+                               (merge-op (uvar (var-name v)) acc)
+                               acc)))
+
+    (define combined-prim (foldl merge-op base (map (compose uprim prim-name) (set->list prims))))
+
+    (define combined-arr
+      (cond
+        [opt-arr
+         (match-define (compact-arrow param-ty ret-ty) opt-arr)
+         (uarrow (go param-ty (not polarity))
+                 (go ret-ty polarity))]
+        [else base]))
+
+    (define combined-rcd
+      (cond
+        [opt-rcd
+         (error 'hi)]
+        [else base]))
+
+    (foldl merge-op combined-var (list combined-prim combined-arr combined-rcd))
+    #;
+    (match cty
       [(struct prim [n])
        (uprim n)]
       [(struct arrow [param-ty ret-ty])
@@ -111,17 +142,14 @@
          (for/list ([b (in-list bounds)])
            (go b polarity)))
 
-       (define base (if (tbl ty)
-                        (uvar n)
-                        (if polarity (ubot)
-                            (utop))))
+
        (define res : UserFacingType
          (for/fold ([acc : UserFacingType base])
                    ([bt (in-list bound-types)])
            (merge-op acc bt)))
        ;; todo handle recursive types
        res]))
-  (go ty #t))
+  (go cty #t))
 
 
 (module* test racket/base
