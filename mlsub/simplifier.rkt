@@ -117,23 +117,13 @@
                            [polarity : Boolean #t])
 
 
-    (match-define (compact-type vars _ opt-arr opt-rcd) cty)
+    (match-define (compact-type (app set->list vars) _ opt-arr opt-rcd) cty)
 
-    (for ([v (in-list (set->list vars))])
-      (define lbs (var-bounds vctbl v #t))
-      (define ubs (var-bounds vctbl v #f))
-
-      (for ([i (in-list lbs)]
-            #:when (var? i))
-        (define bounds (var-bounds vctbl i #t))
-        (when (member v bounds)
-          (update-mapping! i v #t)))
-
-      (for ([i (in-list ubs)]
-            #:when (var? i))
-        (define bounds (var-bounds vctbl i #f))
-        (when (member v bounds)
-          (update-mapping! i v #f))))
+    (unless (null? vars)
+      (for* ([v (in-value (car vars))]
+             [i (in-list vars)])
+        (update-mapping! i v #t)
+        (update-mapping! i v #f)))
 
     (when opt-arr
       (unify-vars! (compact-arrow-param opt-arr) (not polarity))
@@ -151,6 +141,13 @@
   ;; the compact type is
   ;; ct->((ct(vars(a, b)), ct(vars(b, c))), ct->(ct(vars(a)), ct(vars(c))))
   (define (remove-polar-var! [tbl : UnifiedVarMapping])
+    (let loop : Void ([cty : CompactType cty]
+                      [polar : Boolean #t]
+                      [])
+      ;; use compact-type to generate a mapping
+      (match-define (compact-type vars _ opt-arrow opt-rcd) cty)
+      ())
+
     (for ([v (in-list (hash-keys tbl))])
       (define lbs (var-bounds vctbl v #t))
       (define ubs (var-bounds vctbl v #f))
@@ -331,25 +328,29 @@
   (require (submod "..")
            "internal-type-rep.rkt")
 
+  #;
   (let* ([var-a (var 'a 0)]
          [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
          [lhs (mono->compact vctbl var-a)])
     (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
     (define lookup (co-analyze vctbl lhs))
-    (check-equal? (lookup var-a #t)
-                  #f))
+    (check-equal? (lookup var-a #t) #f)
+    (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
+  #;
   (let* ([var-a (var 'a 0)]
          [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
-         [lhs (mono->compact vctbl (arrow var-a (prim 'bool)))])
+         [ty (arrow var-a (prim 'bool))]
+         [lhs (mono->compact vctbl ty)])
     (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
                                                            #:prims (set (prim 'bool)))
                                                       (make-ct #:prims (set (prim 'bool))))))
     (define lookup (co-analyze vctbl lhs))
-    (check-equal? (lookup var-a #f)
-                  #f))
+    (check-equal? (lookup var-a #f) #f)
+    (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
+  ;; => ((a | b) -> b) -> a -> b
   (let* ([var-r (var 'r 0)]
          [var-a (var 'a 0)]
          [var-b (var 'b 0)]
@@ -364,7 +365,15 @@
                                                            #:arrow (compact-arrow (make-ct #:vars (set var-a var-b))
                                                                                   (make-ct #:vars (set var-b var-c))))
                                                   (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a))
-                                                                                  (make-ct #:vars (set var-c))))))))
+                                                                                  (make-ct #:vars (set var-c)))))))
+    (define lookup (co-analyze vctbl (mono->compact vctbl f1)))
+    (check-equal? (lookup var-r #f) #f)
+    (check-equal? (lookup var-a #t) var-a)
+    #;
+    (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'a) (uvar 'b))
+                                                           (uvar 'b))
+                                                   (uarrow (uvar 'a)
+                                                           (uvar 'b)))))
   #;
   (check-match
    (let* ([var1 (var 'hi 0)]
