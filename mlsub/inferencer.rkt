@@ -3,7 +3,7 @@
          racket/match
          racket/list
          "internal-type-rep.rkt"
-         "user-facing-type-rep.rkt"
+         "simplifier.rkt"
          syntax/id-table
          (for-syntax racket/base))
 (provide (all-defined-out))
