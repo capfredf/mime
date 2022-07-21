@@ -146,7 +146,7 @@
                        [polarity : Boolean #t])
     (match-define (compact-type vars _ opt-arr opt-rcd) cty)
 
-    (unless (null? vars)
+    (unless (set-empty? vars)
       (define vs (if polarity pos-vs neg-vs))
       (set-box! vs (set-add (unbox vs) vars)))
 
@@ -165,11 +165,13 @@
            ([acc : (Setof Var) a]
             [ls : (Listof (Setof Var)) lvs])
         (match ls
-          [(? null?) (for* ([tgt (in-value (set-first acc))]
-                            [src (in-list (set->list acc))])
-                       (update-mapping! src tgt polar))]
+          [(? null?)
+           (for* ([tgt (in-value (set-first acc))]
+                  [src (in-list (set->list acc))])
+
+             (update-mapping! src tgt polar))]
           [(cons h t)
-           (define r (set-subtract h acc))
+           (define r (set-intersect h acc))
            (cond
              [(equal? (set-count r) 1) (void)]
              [(set-empty? r) (loop acc t)]
@@ -399,24 +401,24 @@
   (require (submod "..")
            "internal-type-rep.rkt")
 
-  ;; (let* ([var-a (var 'a 0)]
-  ;;        [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
-  ;;        [lhs (mono->compact vctbl var-a)])
-  ;;   (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
-  ;;   (define lookup (co-analyze vctbl lhs))
-  ;;   (check-equal? (lookup var-a #t) #f)
-  ;;   (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
+  (let* ([var-a (var 'a 0)]
+         [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
+         [lhs (mono->compact vctbl var-a)])
+    (define lookup (co-analyze lhs))
+    (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
+    (check-equal? (lookup var-a #t) #f)
+    (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
-  ;; (let* ([var-a (var 'a 0)]
-  ;;        [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
-  ;;        [ty (arrow var-a (prim 'bool))]
-  ;;        [lhs (mono->compact vctbl ty)])
-  ;;   (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
-  ;;                                                          #:prims (set (prim 'bool)))
-  ;;                                                     (make-ct #:prims (set (prim 'bool))))))
-  ;;   (define lookup (co-analyze vctbl lhs))
-  ;;   (check-equal? (lookup var-a #f) #f)
-  ;;   (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
+  (let* ([var-a (var 'a 0)]
+         [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
+         [ty (arrow var-a (prim 'bool))]
+         [lhs (mono->compact vctbl ty)])
+    (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
+                                                           #:prims (set (prim 'bool)))
+                                                      (make-ct #:prims (set (prim 'bool))))))
+    (define lookup (co-analyze lhs))
+    (check-equal? (lookup var-a #f) #f)
+    (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
   ;; => ((a | b) -> b) -> a -> b
@@ -439,7 +441,7 @@
     (check-equal? (lookup var-r #f) #f)
     (check-equal? (lookup var-a #t) var-a)
     (check-equal? (lookup var-b #t) var-a)
-    (check-equal? (lookup var-c #f) var-b)
+    (check-equal? (lookup var-c #f) var-c)
     #;
     (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'b) (uvar 'a))
                                                            (uvar 'b))
