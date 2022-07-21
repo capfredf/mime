@@ -64,31 +64,20 @@
                             (lambda ([a : CompactRecord] [b : CompactRecord]) : CompactRecord
                               (error 'merge "not implemented for records")))))
 
-(define (mono-type->compact-type [vctbl : VarPolarConstrainInfo] [ty : MonoType] [polar : Boolean]) : CompactType
+(define (mono->compact [vctbl : VarPolarConstrainInfo] [ty : MonoType] ) : CompactType
   (let loop : CompactType ([ty : MonoType ty]
-                           [output : CompactType (make-ct)])
+                           [polar : Boolean #t])
     (match ty
       [(? prim?) (make-ct #:prims (set ty))]
       [(? var? v)
        (define lbs (var-bounds vctbl v #t))
        (define ubs (var-bounds vctbl v #f))
-       ;; if either lbs or ubs is empty, then it is *not* needed
-       ;; if
-       (define needed?
-         (or
-           (and (empty? lbs) (empty? ubs))
-           (and (not (set-empty? (set-subtract (list->set lbs)
-                                               (list->set ubs)))))))
-       (cond
-         [needed?
-          (make-ct #:vars (set v))]
-         [else
-          (for/fold ([output : CompactType output])
-                    ([i (in-list (if polar lbs ubs))])
-            (merge-compact-type (loop i (make-ct)) output))])]
+       (for/fold ([output : CompactType (make-ct #:vars (set v))])
+                 ([i (in-list (if polar lbs ubs))])
+         (merge-compact-type (loop i polar) output))]
       [(arrow param-ty ret-ty)
-       (make-ct #:arrow (compact-arrow (loop param-ty (make-ct))
-                                       (loop ret-ty (make-ct))))])))
+       (make-ct #:arrow (compact-arrow (loop param-ty (not polar))
+                                       (loop ret-ty polar)))])))
 
 (: co-occur? (-> VarPolarConstrainInfo Var Boolean MonoType Boolean))
 (define (co-occur? var-ctbl ty1 polar ty2)
@@ -100,116 +89,115 @@
 
 
 (define-type PolarMaybeVars (Pairof (Option Var) (Option Var)))
-(define-type VarCoccurence (HashTable Var PolarMaybeVars))
+(define-type UnifiedVarMapping (HashTable Var PolarMaybeVars))
 ;; given ty and the polarity,
 ;; returns something;
 ;;
 ;; e.g. for (-> a b a|b), the monotype representation should be
 ;; (-> (var a (list b) null) (var b null null) (var a (list b) null)
-(: unify-vars (-> VarPolarConstrainInfo MonoType Boolean VarCoccurence))
-(define (unify-vars var-ctbl ty polarity)
-  (define unified-var-mapping : (HashTable Var (Pairof (Option Var) (Option Var))) (make-hash))
+(: unify-vars (-> VarPolarConstrainInfo CompactType UnifiedVarMapping))
+(define (unify-vars vctbl cty)
+  (define unified-var-mapping : UnifiedVarMapping (make-hash))
 
-  (let unify-vars! : Void ([ty : MonoType ty]
-                           [polarity : Boolean polarity])
-    (match ty
-      [(var _ _)
-       #:when (not (hash-ref unified-var-mapping ty #f))
-       (define (update-mapping! [i : Var]) : Void
-         (hash-update! unified-var-mapping
-                       i
-                       (lambda ([n : PolarMaybeVars]) : PolarMaybeVars
-                         (if polarity
-                             (cons ty
-                                   (cdr n))
-                             (cons (car n)
-                                   ty)))
-                       (lambda () : PolarMaybeVars
-                         (cons #f #f))))
+  (define (update-mapping! [src : Var] [tgt : Var] [polarity : Boolean]) : Void
+    (hash-update! unified-var-mapping
+                  src
+                  (lambda ([n : PolarMaybeVars]) : PolarMaybeVars
+                    (if polarity
+                        (cons tgt
+                              (cdr n))
+                        (cons (car n)
+                              tgt)))
+                  (lambda () : PolarMaybeVars
+                    (cons #f #f))))
+
+  (let unify-vars! : Void ([cty : CompactType cty]
+                           [polarity : Boolean #t])
 
 
-       (for ([b (in-list (var-bounds var-ctbl ty polarity))])
-         (when (and (var? b) (co-occur? var-ctbl ty polarity b))
-           (update-mapping! b))
-         #;
-         (unify-vars! b polarity))
+    (match-define (compact-type vars _ opt-arr opt-rcd) cty)
 
-       #;
-       (for ([b (in-list ubs)])
-         (unify-vars! b polarity))]
-      [(arrow arg-ty ret-ty)
-       ;; choose arg to unify first
-       (unify-vars! arg-ty (not polarity))
-       (unify-vars! ret-ty polarity)]
-      [(? prim?) (void)]
-      [(record fs)
-       (for ([f (in-list fs)])
-         (unify-vars! (cdr f) polarity))]))
+    (for ([v (in-list (set->list vars))])
+      (define lbs (var-bounds vctbl v #t))
+      (define ubs (var-bounds vctbl v #f))
+
+      (for ([i (in-list lbs)]
+            #:when (var? i))
+        (define bounds (var-bounds vctbl i #t))
+        (when (member v bounds)
+          (update-mapping! i v #t)))
+
+      (for ([i (in-list ubs)]
+            #:when (var? i))
+        (define bounds (var-bounds vctbl i #f))
+        (when (member v bounds)
+          (update-mapping! i v #f))))
+
+    (when opt-arr
+      (unify-vars! (compact-arrow-param opt-arr) (not polarity))
+      (unify-vars! (compact-arrow-ret opt-arr) polarity))
+
+    (when opt-rcd
+      (error 'hi)))
+
   unified-var-mapping)
 
-(define (co-analyze [var-cstbl : VarPolarConstrainInfo] [ty : MonoType]) : (-> Var Boolean)
-  ;; FIXME: var-tbl is a strippe-down legacy of var-cstbl. it should be removed.
-  (define var-tbl : (HashTable Var PolarityOcurrence)
-    (make-hash))
+(define ((co-analyze [vctbl : VarPolarConstrainInfo] [cty : CompactType]) [v : Var] [polar : Boolean]) : (Option Var)
+  ;; given this table and a compact type, ty
+  ;; can we do a co-analysis?
+  ;; for example, for (a -> b)  & ( b -> c ) -> a -> c,
+  ;; the compact type is
+  ;; ct->((ct(vars(a, b)), ct(vars(b, c))), ct->(ct(vars(a)), ct(vars(c))))
+  (define (remove-polar-var! [tbl : UnifiedVarMapping])
+    (for ([v (in-list (hash-keys tbl))])
+      (define lbs (var-bounds vctbl v #t))
+      (define ubs (var-bounds vctbl v #f))
+      (when (or (and (empty? lbs) (not (empty? ubs)))
+                (and (not (empty? lbs)) (empty? ubs))
+                (set-empty? (set-subtract (list->set lbs)
+                                          (list->set ubs))))
+        (hash-remove! tbl v)))
+    ;; if either lbs or ubs is empty, then it is *not* needed
+    ;; if
+    #;
+    (define needed?
+      (or
+       (and (empty? lbs) (empty? ubs))
+       (and (not (set-empty? (set-subtract (list->set lbs)
+                                           (list->set ubs))))))))
 
+  (define unified-var-tbl (unify-vars vctbl cty))
+  (remove-polar-var! unified-var-tbl)
 
-  (let remove-polar-var : Void ([ty : MonoType ty]
-                                [polarity : Boolean #t])
-    (match ty
-      [(? var? v)
-       (for-each (lambda ([a : MonoType])
-                   (remove-polar-var a polarity))
-                 (var-bounds var-cstbl v #t))
-
-       (for-each (lambda ([a : MonoType])
-                   (remove-polar-var a polarity))
-                 (var-bounds var-cstbl v #f))
-       (hash-update! var-tbl ty
-                     (lambda ([v : PolarityOcurrence]) : PolarityOcurrence
-                       (if polarity
-                           (cons #t (cdr v))
-                           (cons (car v) #t)))
-                     (lambda () : PolarityOcurrence
-                       (if polarity
-                           (cons #t #f)
-                           (cons #f #t))))]
-      [(? prim?) (void)]
-      [(arrow arg-ty ret-ty)
-       (remove-polar-var arg-ty (not polarity))
-       (remove-polar-var ret-ty polarity)]
-      [(record fs)
-       (for ([f (in-list fs)])
-         (remove-polar-var (cdr f) polarity))]))
-
-
-
-  ;; (define unified-var-tbl (unify-vars! ty #t))
-  (define var-info-tbl (for*/hash : VarInfo
-                                  ([([v : Var] [b : PolarityOcurrence]) (in-hash var-tbl)]
-                                   #:when (and (car b) (cdr b)
-                                               (let ()
-                                                 (match-define (var _ _) v)
-                                                 ;; if lbs and ubs are non-empty,
-                                                 ;; lbs - ubs is empty, then the variable are complete sandwiched, i.e. t1 <: a <: t2
-                                                 (define ubs (var-bounds var-cstbl v #f))
-                                                 (define lbs (var-bounds var-cstbl v #t))
-                                                 (or (set-empty? ubs)
-                                                     (set-empty? lbs)
-                                                     (not (set-empty? (set-subtract ubs lbs)))))))
-                         (values v #t)))
-  (lambda ([v : Var]) : Boolean
-    (cond
-      [(hash-ref var-info-tbl v #f)
-       #t]
-      [else #f])))
+  (cond
+    [(hash-ref unified-var-tbl v #f)
+     =>
+     (lambda ([a : PolarMaybeVars])
+       (cond
+         [((if polar car cdr) a)]
+         [else v]))]
+    [else #f]))
 
 (module+ test
   (require typed/rackunit)
 
   (let* ([var-a (var 'a 0)]
-         [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))])
-    (check-equal? (mono-type->compact-type vctbl var-a #f)
-                  (make-ct #:prims (set (prim 'bool)))))
+         [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
+         [lhs (mono->compact vctbl var-a)])
+    (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
+    (define lookup (co-analyze vctbl lhs))
+    (check-equal? (lookup var-a #t)
+                  #f))
+
+  (let* ([var-a (var 'a 0)]
+         [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
+         [lhs (mono->compact vctbl (arrow var-a (prim 'bool)))])
+    (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
+                                                           #:prims (set (prim 'bool)))
+                                                      (make-ct #:prims (set (prim 'bool))))))
+    (define lookup (co-analyze vctbl lhs))
+    (check-equal? (lookup var-a #f)
+                  #f))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
   (let* ([var-r (var 'r 0)]
@@ -221,38 +209,9 @@
          [f3 (arrow var-b var-c)]
          [vctbl (update-var-constrain (new-var-constrain) var-r #f f2)]
          [vctbl (update-var-constrain vctbl var-r #f f3)])
-    (check-equal? (mono-type->compact-type vctbl f1 #f)
-                  (make-ct #:arrow (compact-arrow (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a var-b))
+    (check-equal? (mono->compact vctbl f1)
+                  (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-r)
+                                                           #:arrow (compact-arrow (make-ct #:vars (set var-a var-b))
                                                                                   (make-ct #:vars (set var-b var-c))))
                                                   (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a))
-                                                                                  (make-ct #:vars (set var-c))))))))
-
-  (let ([var-a (var 'a 0)]
-        [vctbl (new-var-constrain)])
-    (define tbl (co-analyze vctbl (arrow var-a var-a)))
-    (check-true (tbl var-a)))
-
-  (let* ([var-b (var 'b 0)]
-         [var-a (var 'a 0)]
-         [vctbl (update-var-constrain (new-var-constrain) var-a #t var-b)]
-         [vctbl (update-var-constrain vctbl var-b #t var-a)])
-    ;; since var-a is cyclic, we use equal? + check-true
-    (define mapping (unify-vars vctbl
-                                (arrow var-a (arrow var-b var-a))
-                                #t))
-    (check-true
-     (equal?
-      (car (hash-ref mapping
-                     var-b))
-      var-a)))
-
-  (let ([var-a (var 'a 0)]
-        [vctbl (new-var-constrain)])
-    (define tbl (co-analyze vctbl (arrow var-a var-a)))
-    (check-true (tbl var-a)))
-
-  (let* ([var-a (var 'a 0)]
-         [var-b (var 'b 0)]
-         [var-r (var 'r 0)]
-         [var-d (var 'd 0)])
-    (void)))
+                                                                                  (make-ct #:vars (set var-c)))))))))
