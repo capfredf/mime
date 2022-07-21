@@ -97,30 +97,27 @@
 ;;
 ;; e.g. for (-> a b a|b), the monotype representation should be
 ;; (-> (var a (list b) null) (var b null null) (var a (list b) null)
-#;
-(: unify-var (-> UnifiedVarMapping (Listof Var) Boolean (Values UnifiedVarMapping (Listof Var))))
-#;
-(define (unify-var mapping vs polar)
+
+(: unify-var! (-> UnifiedVarMapping Var Boolean Var))
+(define (unify-var! mapping v polar)
   (define op (if polar car cdr))
-  (for ([v (in-list vs)])
-    (define co-vars (op (hash-ref mapping v)))
-    )
+  (define a (hash-ref mapping v))
   (cond
-    [
+    [(op a)
      =>
-     (lambda ([a : PolarMaybeVars])
-       (cond
-         [( a)
-          =>
-          (lambda ([tgt : Var])
-            ;;   +        -        -     +
-            ;; (a | b -> b & c) -> a --> c
-            ;; => ( a -> b & c) -> a --> c
-            ;; polar-maybe-vars for b is (#f, #f) (car is pos, cdr is neg)
-            ;; that for b is (#f, #f)
-            )]
-         [else (values mapping v)]))]
-    [else (values mapping #f)]))
+     (lambda ([tgt : Var])
+       (for ([k (in-list (hash-keys mapping))])
+         (hash-update! mapping k (lambda ([old : PolarMaybeVars]) : PolarMaybeVars
+                                   (match-define (cons pos neg) old)
+                                   (cond
+                                     [polar (cons (if (equal? v pos) tgt
+                                                      pos)
+                                                  neg)]
+                                     [else (cons pos
+                                                 (if (equal? v neg) tgt
+                                                     neg))]))))
+       tgt)]
+    [else v]))
 
 (: create-unified-var-mapping (-> CompactType UnifiedVarMapping))
 (define (create-unified-var-mapping cty)
@@ -221,15 +218,14 @@
        (and (not (set-empty? (set-subtract (list->set lbs)
                                            (list->set ubs))))))))
 
-(: needed? (-> VarPolarOcurrence Var Boolean))
-(define (needed? mapping v)
+(: not-needed? (-> VarPolarOcurrence Var Boolean))
+(define (not-needed? mapping v)
   (match (hash-ref mapping v)
     [(cons pos neg)
-     (and pos neg)]))
+     (eq? pos (not neg))]))
 
-(define ((co-analyze [cty : CompactType]) [v : Var] [polar : Boolean])
-        : (Option Var)
-  ;; (Values VarPolarOcurrence UnifiedVarMapping)
+(define (co-analyze [cty : CompactType])
+        : (Values VarPolarOcurrence UnifiedVarMapping)
   ;; given this table and a compact type, ty
   ;; can we do a co-analysis?
   ;; for example, for (a -> b)  & ( b -> c ) -> a -> c,
@@ -240,6 +236,8 @@
   (define polar-var-mapping (get-polar-var-mapping cty))
   (define unified-var-mapping (create-unified-var-mapping cty))
 
+  (values polar-var-mapping unified-var-mapping)
+  #;
   (match (hash-ref polar-var-mapping v)
     [(cons a b) #:when (eq? a (not b)) #f]
     [_
@@ -334,7 +332,7 @@
 
   (define cty (mono->compact var-ctbl ty))
 
-  (define lookup (co-analyze cty))
+  (define-values (polar-mapping unified-var-mapping) (co-analyze cty))
 
   (: go (-> CompactType Boolean UserFacingType))
   (define (go cty polarity)
@@ -345,6 +343,8 @@
     (define combined-var (for/fold : UserFacingType
                                    ([acc : UserFacingType base])
                                    ([v (in-list (set->list vars))])
+                           acc
+                           #;
                            (if (lookup v polarity)
                                (merge-op (uvar (var-name v)) acc)
                                acc)))
@@ -404,9 +404,10 @@
   (let* ([var-a (var 'a 0)]
          [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
          [lhs (mono->compact vctbl var-a)])
-    (define lookup (co-analyze lhs))
+    (define-values (polar-mapping unified-var-mapping) (co-analyze lhs))
     (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
-    (check-equal? (lookup var-a #t) #f)
+    (check-equal? (not-needed? polar-mapping var-a) #t)
+    #;
     (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
   (let* ([var-a (var 'a 0)]
@@ -416,8 +417,9 @@
     (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
                                                            #:prims (set (prim 'bool)))
                                                       (make-ct #:prims (set (prim 'bool))))))
-    (define lookup (co-analyze lhs))
-    (check-equal? (lookup var-a #f) #f)
+    (define-values (polar-mapping unified-var-mapping) (co-analyze lhs))
+    (check-equal? (not-needed? polar-mapping var-a) #t)
+    #;
     (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
@@ -437,11 +439,14 @@
                                                                                   (make-ct #:vars (set var-b var-c))))
                                                   (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a))
                                                                                   (make-ct #:vars (set var-c)))))))
-    (define lookup (co-analyze (mono->compact vctbl f1)))
-    (check-equal? (lookup var-r #f) #f)
-    (check-equal? (lookup var-a #t) var-a)
-    (check-equal? (lookup var-b #t) var-a)
-    (check-equal? (lookup var-c #f) var-c)
+    (define-values (polar-mapping unified-var-mapping) (co-analyze (mono->compact vctbl f1)))
+    (check-equal? (not-needed? polar-mapping var-r) #t)
+    (let ([t1 (unify-var! unified-var-mapping var-a #t)])
+      (check-equal? t1 var-a)
+      (let ([t2 (unify-var! unified-var-mapping var-b #t)])
+        (check-equal? t2 t1)
+        (let ([t (unify-var! unified-var-mapping var-c #t)])
+          (check-equal? t var-c))))
     #;
     (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'b) (uvar 'a))
                                                            (uvar 'b))
