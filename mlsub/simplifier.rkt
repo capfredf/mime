@@ -97,65 +97,119 @@
 ;;
 ;; e.g. for (-> a b a|b), the monotype representation should be
 ;; (-> (var a (list b) null) (var b null null) (var a (list b) null)
-(: unify-vars (-> VarPolarConstrainInfo CompactType UnifiedVarMapping))
-(define (unify-vars vctbl cty)
+#;
+(: unify-var (-> UnifiedVarMapping (Listof Var) Boolean (Values UnifiedVarMapping (Listof Var))))
+#;
+(define (unify-var mapping vs polar)
+  (define op (if polar car cdr))
+  (for ([v (in-list vs)])
+    (define co-vars (op (hash-ref mapping v)))
+    )
+  (cond
+    [
+     =>
+     (lambda ([a : PolarMaybeVars])
+       (cond
+         [( a)
+          =>
+          (lambda ([tgt : Var])
+            ;;   +        -        -     +
+            ;; (a | b -> b & c) -> a --> c
+            ;; => ( a -> b & c) -> a --> c
+            ;; polar-maybe-vars for b is (#f, #f) (car is pos, cdr is neg)
+            ;; that for b is (#f, #f)
+            )]
+         [else (values mapping v)]))]
+    [else (values mapping #f)]))
+
+(: create-unified-var-mapping (-> CompactType UnifiedVarMapping))
+(define (create-unified-var-mapping cty)
+  (: pos-vs (Boxof (Setof (Setof Var))))
+  (define pos-vs (box (ann (set) (Setof (Setof Var)))))
+  (define neg-vs : (Boxof (Setof (Setof Var))) (box (ann (set) (Setof (Setof Var)))))
   (define unified-var-mapping : UnifiedVarMapping (make-hash))
 
   (define (update-mapping! [src : Var] [tgt : Var] [polarity : Boolean]) : Void
     (hash-update! unified-var-mapping
                   src
                   (lambda ([n : PolarMaybeVars]) : PolarMaybeVars
+                    (match-define (cons pos neg) n)
                     (if polarity
                         (cons tgt
-                              (cdr n))
-                        (cons (car n)
+                              neg)
+                        (cons pos
                               tgt)))
                   (lambda () : PolarMaybeVars
                     (cons #f #f))))
 
-  (let unify-vars! : Void ([cty : CompactType cty]
-                           [polarity : Boolean #t])
-
-
-    (match-define (compact-type (app set->list vars) _ opt-arr opt-rcd) cty)
+  (let create! : Void ([cty : CompactType cty]
+                       [polarity : Boolean #t])
+    (match-define (compact-type vars _ opt-arr opt-rcd) cty)
 
     (unless (null? vars)
-      (for* ([v (in-value (car vars))]
-             [i (in-list vars)])
-        (update-mapping! i v #t)
-        (update-mapping! i v #f)))
+      (define vs (if polarity pos-vs neg-vs))
+      (set-box! vs (set-add (unbox vs) vars)))
 
     (when opt-arr
-      (unify-vars! (compact-arrow-param opt-arr) (not polarity))
-      (unify-vars! (compact-arrow-ret opt-arr) polarity))
+      (create! (compact-arrow-param opt-arr) (not polarity))
+      (create! (compact-arrow-ret opt-arr) polarity))
 
     (when opt-rcd
       (error 'hi)))
 
+  (for ([vs (in-list (list (unbox pos-vs) (unbox neg-vs)))]
+        [polar (in-list (list #t #f))])
+    (for* ([lvs (in-value (set->list vs))]
+           [a (in-list lvs)])
+      (let loop : Void
+           ([acc : (Setof Var) a]
+            [ls : (Listof (Setof Var)) lvs])
+        (match ls
+          [(? null?) (for* ([tgt (in-value (set-first acc))]
+                            [src (in-list (set->list acc))])
+                       (update-mapping! src tgt polar))]
+          [(cons h t)
+           (define r (set-subtract h acc))
+           (cond
+             [(equal? (set-count r) 1) (void)]
+             [(set-empty? r) (loop acc t)]
+             [else (loop r t)])]))))
+
   unified-var-mapping)
 
-(define ((co-analyze [vctbl : VarPolarConstrainInfo] [cty : CompactType]) [v : Var] [polar : Boolean]) : (Option Var)
-  ;; given this table and a compact type, ty
-  ;; can we do a co-analysis?
-  ;; for example, for (a -> b)  & ( b -> c ) -> a -> c,
-  ;; the compact type is
-  ;; ct->((ct(vars(a, b)), ct(vars(b, c))), ct->(ct(vars(a)), ct(vars(c))))
-  (define (remove-polar-var! [tbl : UnifiedVarMapping])
-    (let loop : Void ([cty : CompactType cty]
-                      [polar : Boolean #t]
-                      [])
-      ;; use compact-type to generate a mapping
-      (match-define (compact-type vars _ opt-arrow opt-rcd) cty)
-      ())
+(define-type VarPolarOcurrence (Immutable-HashTable Var PolarityOcurrence))
 
-    (for ([v (in-list (hash-keys tbl))])
-      (define lbs (var-bounds vctbl v #t))
-      (define ubs (var-bounds vctbl v #f))
-      (when (or (and (empty? lbs) (not (empty? ubs)))
-                (and (not (empty? lbs)) (empty? ubs))
-                (set-empty? (set-subtract (list->set lbs)
-                                          (list->set ubs))))
-        (hash-remove! tbl v)))
+(define (get-polar-var-mapping [cty : CompactType]) : VarPolarOcurrence
+  (let loop : VarPolarOcurrence ([cty : CompactType cty]
+                    [polar : Boolean #t]
+                    [polar-var-mapping : VarPolarOcurrence (make-immutable-hash)])
+      ;; use compact-type to generate a mapping
+    (match-define (compact-type (app set->list vars) _ opt-arrow opt-rcd) cty)
+      ;; vars (a, b) polar #t
+      ;; a -> (#f, #t)
+      ;; b -> ([a, ], _)
+    (define mapping1
+      (for/fold : VarPolarOcurrence
+                ([acc : VarPolarOcurrence polar-var-mapping])
+                ([v (in-list vars)])
+        (hash-update acc v (lambda ([po : PolarityOcurrence]) : PolarityOcurrence
+                             (match-define (cons pos neg) po)
+                             (if polar
+                                 (cons #t neg)
+                                 (cons pos #t)))
+                     (lambda () : (Pairof Boolean Boolean)
+                       (cons #f #f)))))
+
+    (define mapping2
+      (match opt-arrow
+        [(compact-arrow param-ty ret-ty)
+         (loop ret-ty polar (loop param-ty (not polar) mapping1))]
+        [_ mapping1]))
+    (define mapping3
+      (match opt-rcd
+        [(? list?) (error 'hi)]
+        [_ mapping2]))
+    mapping3)
     ;; if either lbs or ubs is empty, then it is *not* needed
     ;; if
     #;
@@ -165,17 +219,34 @@
        (and (not (set-empty? (set-subtract (list->set lbs)
                                            (list->set ubs))))))))
 
-  (define unified-var-tbl (unify-vars vctbl cty))
-  (remove-polar-var! unified-var-tbl)
+(: needed? (-> VarPolarOcurrence Var Boolean))
+(define (needed? mapping v)
+  (match (hash-ref mapping v)
+    [(cons pos neg)
+     (and pos neg)]))
 
-  (cond
-    [(hash-ref unified-var-tbl v #f)
-     =>
-     (lambda ([a : PolarMaybeVars])
-       (cond
-         [((if polar car cdr) a)]
-         [else v]))]
-    [else #f]))
+(define ((co-analyze [cty : CompactType]) [v : Var] [polar : Boolean])
+        : (Option Var)
+  ;; (Values VarPolarOcurrence UnifiedVarMapping)
+  ;; given this table and a compact type, ty
+  ;; can we do a co-analysis?
+  ;; for example, for (a -> b)  & ( b -> c ) -> a -> c,
+  ;; the compact type is
+  ;; ct->((ct(vars(a, b)), ct(vars(b, c))), ct->(ct(vars(a)), ct(vars(c))))
+
+
+  (define polar-var-mapping (get-polar-var-mapping cty))
+  (define unified-var-mapping (create-unified-var-mapping cty))
+
+  (match (hash-ref polar-var-mapping v)
+    [(cons a b) #:when (eq? a (not b)) #f]
+    [_
+     (cond
+       [(hash-ref unified-var-mapping v #f)
+        =>
+        (lambda ([n : PolarMaybeVars])
+          ((if polar car cdr) n))]
+       [else v])]))
 
 
 
@@ -261,7 +332,7 @@
 
   (define cty (mono->compact var-ctbl ty))
 
-  (define lookup (co-analyze var-ctbl cty))
+  (define lookup (co-analyze cty))
 
   (: go (-> CompactType Boolean UserFacingType))
   (define (go cty polarity)
@@ -328,26 +399,24 @@
   (require (submod "..")
            "internal-type-rep.rkt")
 
-  #;
-  (let* ([var-a (var 'a 0)]
-         [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
-         [lhs (mono->compact vctbl var-a)])
-    (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
-    (define lookup (co-analyze vctbl lhs))
-    (check-equal? (lookup var-a #t) #f)
-    (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
+  ;; (let* ([var-a (var 'a 0)]
+  ;;        [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
+  ;;        [lhs (mono->compact vctbl var-a)])
+  ;;   (check-equal? lhs (make-ct #:vars (set var-a) #:prims (set (prim 'bool))))
+  ;;   (define lookup (co-analyze vctbl lhs))
+  ;;   (check-equal? (lookup var-a #t) #f)
+  ;;   (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
-  #;
-  (let* ([var-a (var 'a 0)]
-         [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
-         [ty (arrow var-a (prim 'bool))]
-         [lhs (mono->compact vctbl ty)])
-    (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
-                                                           #:prims (set (prim 'bool)))
-                                                      (make-ct #:prims (set (prim 'bool))))))
-    (define lookup (co-analyze vctbl lhs))
-    (check-equal? (lookup var-a #f) #f)
-    (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
+  ;; (let* ([var-a (var 'a 0)]
+  ;;        [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
+  ;;        [ty (arrow var-a (prim 'bool))]
+  ;;        [lhs (mono->compact vctbl ty)])
+  ;;   (check-equal? lhs (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a)
+  ;;                                                          #:prims (set (prim 'bool)))
+  ;;                                                     (make-ct #:prims (set (prim 'bool))))))
+  ;;   (define lookup (co-analyze vctbl lhs))
+  ;;   (check-equal? (lookup var-a #f) #f)
+  ;;   (check-equal? (coalesce-type vctbl ty) (uarrow (uprim 'bool) (uprim 'bool))))
 
   ;; r & (a -> b)  & ( b -> c ) -> a -> c
   ;; => ((a | b) -> b) -> a -> b
@@ -366,11 +435,13 @@
                                                                                   (make-ct #:vars (set var-b var-c))))
                                                   (make-ct #:arrow (compact-arrow (make-ct #:vars (set var-a))
                                                                                   (make-ct #:vars (set var-c)))))))
-    (define lookup (co-analyze vctbl (mono->compact vctbl f1)))
+    (define lookup (co-analyze (mono->compact vctbl f1)))
     (check-equal? (lookup var-r #f) #f)
     (check-equal? (lookup var-a #t) var-a)
+    (check-equal? (lookup var-b #t) var-a)
+    (check-equal? (lookup var-c #f) var-b)
     #;
-    (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'a) (uvar 'b))
+    (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'b) (uvar 'a))
                                                            (uvar 'b))
                                                    (uarrow (uvar 'a)
                                                            (uvar 'b)))))
