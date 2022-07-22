@@ -70,13 +70,7 @@
 
 (define (type-infer term)
   (let-values ([(cs ty) (do-type-infer term (new-env))])
-    (let ([cty (mono->compact cs ty)])
-      (define unified-var-mapping (create-unified-var-mapping cty))
-      (eprintf "unified-var-mapping ~a ~n" unified-var-mapping)
-      (void)
-      ;; (eprintf "ty ~a ~n~n ty ~a ~n" ty uty)
-      #;
-      (uty->sexp uty))))
+    (uty->sexp (coalesce-type cs ty))))
 
 
 ;; (let-values ([(cs ty) (do-type-infer #'(lambda (p)
@@ -87,11 +81,12 @@
 ;;     (printf "~a : ~nconstrain state ~a ~n~n" k
 ;;             v)))
 
-(type-infer #'(lambda (f)
-                (lambda (x)
-                  (f (f x)))))
 
-
+(type-infer #'(lambda (p)
+                  (lambda (v)
+                    (lambda (d)
+                      (if (p v) v
+                          d)))))
 (module+ test
   (require rackunit)
 
@@ -110,7 +105,7 @@
        (and (equal? a b) a b)]))
 
   (define-syntax-rule (tc given expected)
-    (check-equal? (type-infer given)
+    (check-equal? (type-infer (syntax given))
                   expected))
 
   (define-syntax-rule (tc-match given expected)
@@ -121,50 +116,36 @@
     (check-true (alpha-eq? (type-infer given)
                            expected)))
 
-  (check-equal?
-   (type-infer #'(lambda (p)
-                   (if (p 10) #t
-                       24)))
-   '(-> (-> nat bool) (⊔ nat bool)))
+  (check-true
+   (and (member (type-infer #'(lambda (p)
+                                (if (p 10) #t
+                                    24)))
+                (list '(-> (-> nat bool) (⊔ nat bool))
+                      '(-> (-> nat bool) (⊔ bool nat))))
+        #t))
 
-  (check-equal?
-   (type-infer #'(lambda (x)
-                   x))
+  (tc (lambda (x) x)
    '(-> α α))
 
-  (check-equal?
-   (type-infer #'(lambda (a)
-                   (lambda (b)
-                     (if #t a
-                         b))))
+  (tc
+   (lambda (a)
+     (lambda (b)
+       (if #t a
+           b)))
    '(-> α (-> α α)))
 
-
+  (check-true
+   (and (member (type-infer #'(lambda (f)
+                                (lambda (x)
+                                  (f (f x)))))
+                (list '(-> (-> α (⊓ α β)) (-> α β))
+                      '(-> (-> α (⊓ β α)) (-> α β))))
+        #t))
 
   ;; TODO
 
-  ;; (uty->sexp (coalesce-type (type-infer #'(lambda (p)
-  ;;                                           (lambda (v)
-  ;;                                             (lambda (d)
-  ;;                                               (if (p v) v
-  ;;                                                   d))))
-  ;;                                    (new-env))))
-  (tc #'10 'nat)
-  (tc #'#t 'bool)
-  (tc #'(if #t 42 24) 'nat)
-  (tc #'(rcd [a 10]) '{[a : nat]})
-
-  #;
-  (tc-match #'(let ([f (lambda (x) x)])
-                (f 42))
-            (var _ (variable-state _
-                                   (list (prim 'nat))
-                                   null)))
-
-  #;
-  (tc-match #'((lambda (a) a)
-               42)
-            ;; we know the result type is at least a Nat, i.e, alpha V Nat
-            (var _ (variable-state _
-                                   (list (prim 'nat))
-                                   null))))
+  (tc 10 'nat)
+  (tc #t 'bool)
+  (tc (if #t 42 24) 'nat)
+  ;; (tc #'(rcd [a 10]) '{[a : nat]})
+)
