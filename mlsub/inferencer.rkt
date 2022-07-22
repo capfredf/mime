@@ -48,13 +48,11 @@
      (define ty (fresh-var! 'app))
      (define-values (cs^ ty^) (recur #'f))
      (define-values (cs^^ ty^^) (recur #'arg #:var-ctbl cs^))
-     ;; (eprintf "cs^ ~a ~a ~a ~n" cs^ ty^ (constrain cs^^ ty^ (arrow ty^^ ty)))
      (values (constrain cs^^ ty^ (arrow ty^^ ty)) ty)]
     [(if cond-expr then-expr else-expr)
      (define-values (cs-c ty-c) (recur #'cond-expr))
      (define-values (cs-th ty-th) (recur #'then-expr #:var-ctbl (constrain cs-c ty-c (prim 'bool))))
      (define ty^^ (fresh-var! 'br))
-     ;; (eprintf "=============~ncs-c ~a ~n=============== cs-th ~a ~n~n" cs-c cs-th)
      (define-values (cs-el ty-el) (recur #'else-expr #:var-ctbl (constrain cs-th ty-th ty^^)))
      (values (constrain cs-el ty-el ty^^) ty^^)]
     [(let ([x rhs]) body)
