@@ -82,11 +82,6 @@
 ;;             v)))
 
 
-(type-infer #'(lambda (p)
-                  (lambda (v)
-                    (lambda (d)
-                      (if (p v) v
-                          d)))))
 (module+ test
   (require rackunit)
 
@@ -134,6 +129,11 @@
            b)))
    '(-> α (-> α α)))
 
+  (tc 10 'nat)
+  (tc #t 'bool)
+  (tc (if #t 42 24) 'nat)
+
+
   (check-true
    (and (member (type-infer #'(lambda (f)
                                 (lambda (x)
@@ -142,10 +142,16 @@
                       '(-> (-> α (⊓ β α)) (-> α β))))
         #t))
 
-  ;; TODO
+  ;; (a -> bool) -> a -> b -> a | b ∀<=> (a -> bool) -> a ⊓ b -> b -> b
+  (check-true
+   (and (member (type-infer #'(lambda (p)
+                                (lambda (v)
+                                  (lambda (d)
+                                    (if (p v) v
+                                        d)))))
+                (list '(-> (-> α bool) (-> (⊓ β α) (-> β β)))
+                      '(-> (-> α bool) (-> (⊓ α β) (-> β β)))))
+        #t))
 
-  (tc 10 'nat)
-  (tc #t 'bool)
-  (tc (if #t 42 24) 'nat)
   ;; (tc #'(rcd [a 10]) '{[a : nat]})
 )
