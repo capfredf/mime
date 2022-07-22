@@ -76,6 +76,8 @@
 (define (new-env-with-primitives)
   (define primitives (list
                       (cons #'add1 (arrow (prim 'nat) (prim 'nat)))
+                      (cons #'plus (arrow (prim 'nat)
+                                          (arrow i:nat i:nat)))
                       (cons #'sub1 (arrow i:nat i:nat))
                       (cons #'zero? (arrow i:nat i:bool))))
   (define env (new-env))
@@ -154,9 +156,9 @@
   (tc (if #t 42 24) 'nat)
 
   (tc (letrec ([sum (lambda (x)
-                              (if (zero? x)
-                                  0
-                                  (add1 (sum (sub1 x)))))])
+                      (if (zero? x)
+                          0
+                          (plus x (sum (sub1 x)))))])
         sum)
       '(-> nat nat))
 
