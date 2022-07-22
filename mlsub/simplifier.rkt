@@ -92,12 +92,6 @@
 
 (define-type PolarMaybeVars (Pairof (Option Var) (Option Var)))
 (define-type UnifiedVarMapping (HashTable Var PolarMaybeVars))
-;; given ty and the polarity,
-;; returns something;
-;;
-;; e.g. for (-> a b a|b), the monotype representation should be
-;; (-> (var a (list b) null) (var b null null) (var a (list b) null)
-
 (: unify-var! (-> UnifiedVarMapping Var Boolean Var))
 (define (unify-var! mapping v polar)
   (define op (if polar car cdr))
@@ -106,8 +100,17 @@
     [(op a)
      =>
      (lambda ([tgt : Var])
+       ;; ((a | b -> b & c) -> b -> c)
+       ;;   a's polar (b, #f)
+       ;;   b's polar (a, c)
+       ;;   c's polar (c, c)
+       ;; pick b:
        (hash-update! mapping v (lambda ([old : PolarMaybeVars]) : PolarMaybeVars
-                                 (cons tgt tgt)))
+                                 (match-define (cons pos neg) old)
+                                 (cons (if pos tgt
+                                           pos)
+                                       (if neg tgt
+                                           neg))))
        (for ([k (in-list (hash-keys mapping))])
          (hash-update! mapping k (lambda ([old : PolarMaybeVars]) : PolarMaybeVars
                                    (match-define (cons pos neg) old)
@@ -153,10 +156,13 @@
     (when opt-rcd
       (error 'hi)))
 
+  ;; fixme the ordering issue
+  (eprintf "start ~n")
   (for ([vs (in-list (list (unbox pos-vs) (unbox neg-vs)))]
         [polar (in-list (list #t #f))])
     (for* ([lvs (in-value (set->list vs))]
            [a (in-list lvs)])
+      (eprintf "a is ~a ~n" a)
       (let loop : Void
            ([acc : (Setof Var) a]
             [ls : (Listof (Setof Var)) lvs])
@@ -169,7 +175,7 @@
           [(cons h t)
            (define r (set-intersect h acc))
            (cond
-             [(equal? (set-count r) 1) (void)]
+             [(equal? (set-count r) 1) (update-mapping! (set-first r) (set-first r) polar)]
              [(set-empty? r) (loop acc t)]
              [else (loop r t)])]))))
 
@@ -329,8 +335,13 @@
   (define inter-op (create-merge-op inter-fun utop?))
 
   (define cty (mono->compact var-ctbl ty))
+  (eprintf "cty ~a ~n" cty)
 
   (define-values (polar-mapping unified-var-mapping) (co-analyze cty))
+
+  (eprintf "===========~n")
+  ;; (eprintf "polar-mapping ~a ~n" polar-mapping)
+  (eprintf "unified-var-mapping ~a ~n~n" unified-var-mapping)
 
   (: go (-> CompactType Boolean UserFacingType))
   (define (go cty polarity)
@@ -341,10 +352,15 @@
     (define combined-var (for/fold : UserFacingType
                                    ([acc : UserFacingType base])
                                    ([v (in-list (set->list vars))])
-                           (if (not-needed? polar-mapping v)
-                               acc
-                               (let ([v^ (unify-var! unified-var-mapping v polarity)])
-                                 (merge-op (uvar (var-name v^)) acc)))))
+                           (eprintf "~n")
+                           (eprintf "acc ~a ~n" acc)
+                           (eprintf "v ~a ~n" v)
+                           (define out  (if (not-needed? polar-mapping v)
+                                            acc
+                                            (let ([v^ (unify-var! unified-var-mapping v polarity)])
+                                              (merge-op (uvar (var-name v^)) acc))))
+                           (eprintf "out ~a ~n" out)
+                           out))
 
     (define combined-prim (foldl merge-op base (map (compose uprim prim-name) (set->list prims))))
 

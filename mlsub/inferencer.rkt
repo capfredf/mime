@@ -70,7 +70,12 @@
 
 (define (type-infer term)
   (let-values ([(cs ty) (do-type-infer term (new-env))])
-    (let ([uty (coalesce-type cs ty)])
+    (let ([cty (mono->compact cs ty)])
+      (define unified-var-mapping (create-unified-var-mapping cty))
+      (eprintf "unified-var-mapping ~a ~n" unified-var-mapping)
+      (void)
+      ;; (eprintf "ty ~a ~n~n ty ~a ~n" ty uty)
+      #;
       (uty->sexp uty))))
 
 
@@ -82,6 +87,9 @@
 ;;     (printf "~a : ~nconstrain state ~a ~n~n" k
 ;;             v)))
 
+(type-infer #'(lambda (f)
+                (lambda (x)
+                  (f (f x)))))
 
 
 (module+ test
@@ -134,10 +142,6 @@
 
 
   ;; TODO
-  ;; (uty->sexp (coalesce-type (type-infer #'(lambda (f)
-  ;;                                        (lambda (x)
-  ;;                                          (f (f x))))
-  ;;                                       (new-env))))
 
   ;; (uty->sexp (coalesce-type (type-infer #'(lambda (p)
   ;;                                           (lambda (v)
