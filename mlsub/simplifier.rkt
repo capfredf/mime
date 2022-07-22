@@ -106,16 +106,15 @@
     [(op a)
      =>
      (lambda ([tgt : Var])
+       (hash-update! mapping v (lambda ([old : PolarMaybeVars]) : PolarMaybeVars
+                                 (cons tgt tgt)))
        (for ([k (in-list (hash-keys mapping))])
          (hash-update! mapping k (lambda ([old : PolarMaybeVars]) : PolarMaybeVars
                                    (match-define (cons pos neg) old)
-                                   (cond
-                                     [polar (cons (if (equal? v pos) tgt
-                                                      pos)
-                                                  neg)]
-                                     [else (cons pos
-                                                 (if (equal? v neg) tgt
-                                                     neg))]))))
+                                   (cons (if (equal? v pos) tgt
+                                             pos)
+                                         (if (equal? v neg) tgt
+                                             neg)))))
        tgt)]
     [else v]))
 
@@ -305,7 +304,6 @@
 
 (define (coalesce-type [var-ctbl : VarPolarConstrainInfo] [ty : MonoType]) : UserFacingType
   ;; todo a table to track recurive type vars.
-
   (define ((create-merge-op [op : (-> UserFacingType UserFacingType UserFacingType)]
                             [base-pred : (-> UserFacingType Boolean)])
            [ty1 : UserFacingType] [ty2 : UserFacingType]) : UserFacingType
@@ -350,6 +348,7 @@
 
     (define combined-prim (foldl merge-op base (map (compose uprim prim-name) (set->list prims))))
 
+
     (define combined-arr
       (cond
         [opt-arr
@@ -364,33 +363,7 @@
          (error 'hi)]
         [else base]))
 
-    (foldl merge-op combined-var (list combined-prim combined-arr combined-rcd))
-    #;
-    (match cty
-      [(struct prim [n])
-       (uprim n)]
-      [(struct arrow [param-ty ret-ty])
-       (uarrow (go param-ty (not polarity))
-               (go ret-ty polarity))]
-      [(struct record [fs])
-       (urecord (for/list ([i (in-list fs)])
-                  (cons (car i) (go (cdr i) polarity))))]
-      [(and (var n _) v)
-       ;; todo handle recursive variables
-       (define-values (bounds merge-op)
-         (if polarity (values (var-bounds var-ctbl v #t) union-op)
-             (values (var-bounds var-ctbl v #f) inter-op)))
-       (define bound-types : (Listof UserFacingType)
-         (for/list ([b (in-list bounds)])
-           (go b polarity)))
-
-
-       (define res : UserFacingType
-         (for/fold ([acc : UserFacingType base])
-                   ([bt (in-list bound-types)])
-           (merge-op acc bt)))
-       ;; todo handle recursive types
-       res]))
+    (foldl merge-op combined-var (list combined-prim combined-arr combined-rcd)))
   (go cty #t))
 
 
@@ -400,6 +373,7 @@
   (require (submod "..")
            "internal-type-rep.rkt")
 
+  #;
   (let* ([var-a (var 'a 0)]
          [vctbl (update-var-constrain (new-var-constrain) var-a #t (prim 'bool))]
          [lhs (mono->compact vctbl var-a)])
@@ -408,6 +382,7 @@
     (check-equal? (not-needed? polar-mapping var-a) #t)
     (check-equal? (coalesce-type vctbl var-a) (uprim 'bool)))
 
+  #;
   (let* ([var-a (var 'a 0)]
          [vctbl (update-var-constrain (new-var-constrain) var-a #f (prim 'bool))]
          [ty (arrow var-a (prim 'bool))]
@@ -444,10 +419,9 @@
         (check-equal? t2 t1)
         (let ([t (unify-var! unified-var-mapping var-c #t)])
           (check-equal? t var-c))))
-    (check-equal? (coalesce-type vctbl f1) (uarrow (uarrow (uunion (uvar 'b) (uvar 'a))
-                                                           (uvar 'b))
-                                                   (uarrow (uvar 'a)
-                                                           (uvar 'b)))))
+    (check-equal? (coalesce-type vctbl f1) (uarrow
+                                            (uarrow (uvar 'a) (uinter (uvar 'c) (uvar 'a)))
+                                            (uarrow (uvar 'a) (uvar 'c)))))
   #;
   (check-match
    (let* ([var1 (var 'hi 0)]
