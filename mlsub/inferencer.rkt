@@ -99,9 +99,9 @@
   ;;     [((struct prim [a]) (struct prim [b]))
   ;;      (and (equal? a b) a b)]))
 
-  ;; (define-syntax-rule (tc given expected)
-  ;;   (check-equal? (type-infer (syntax given))
-  ;;                 expected))
+  (define-syntax-rule (tc given expected)
+    (check-equal? (type-infer (syntax given))
+                  expected))
 
   ;; (define-syntax-rule (tc-match given expected)
   ;;   (check-match (type-infer given)
@@ -134,6 +134,7 @@
   (tc (if #t 42 24) 'nat)
 
 
+  ;; (a -> a & b) -> a -> b ∀<=> (a | b -> b) -> a -> b
   (check-true
    (and (member (type-infer #'(lambda (f)
                                 (lambda (x)
