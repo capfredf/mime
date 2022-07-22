@@ -105,6 +105,9 @@
     (define-values (_1 _2) (f var-ctbl (cdr i)))
     (values _1 (cons (cons (car i) _2) fs^))))
 
+(define i:nat (prim 'nat))
+(define i:bool (prim 'bool))
+
 
 (define (fresh-var! [debug-name : Symbol] [lvl : Natural 0]) : Var
   (var (gensym debug-name) lvl))

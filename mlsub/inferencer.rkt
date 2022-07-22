@@ -1,5 +1,6 @@
 #lang racket/base
 (require syntax/parse
+         racket/dict
          racket/match
          racket/list
          "internal-type-rep.rkt"
@@ -59,6 +60,12 @@
      (define-values (cs-rhs ty^) (recur #'rhs env (add1 lvl)))
      (define-values (cs-b ty^^) (recur #'body (extend-env env #'x (poly-type lvl ty^)) #:var-ctbl cs-rhs))
      (values cs-b ty^^)]
+    [(letrec ([x rhs]) body)
+     (define rhs-ty (fresh-var! 'letrec))
+     (define-values (cs-rhs ty^) (recur #'rhs (extend-env env #'x rhs-ty) (add1 lvl)))
+     (define cs-rhs^ (constrain cs-rhs rhs-ty ty^))
+     (define-values (cs-b ty^^) (recur #'body (extend-env env #'x (poly-type lvl rhs-ty)) #:var-ctbl cs-rhs^))
+     (values cs-b ty^^)]
     [(sel rcd name)
      (define ty (fresh-var! 'sel))
      (define-values (cs ty^^) (recur #'rcd env #:var-ctbl var-ctbl))
@@ -66,9 +73,26 @@
 
 ;; (do-type-infer #'(lambda (x) 10) (new-env))
 
+(define (new-env-with-primitives)
+  (define primitives (list
+                      (cons #'add1 (arrow (prim 'nat) (prim 'nat)))
+                      (cons #'sub1 (arrow i:nat i:nat))
+                      (cons #'zero? (arrow i:nat i:bool))))
+  (define env (new-env))
+  (for/fold ([env env])
+            ([(k v) (in-dict primitives)])
+    (extend-env env k v)))
+
 (define (type-infer term)
-  (let-values ([(cs ty) (do-type-infer term (new-env))])
+  (let-values ([(cs ty) (do-type-infer term (new-env-with-primitives))])
     (uty->sexp (coalesce-type cs ty))))
+
+#;
+(type-infer #'(letrec ([sum (lambda (x)
+                              (if (zero? x)
+                                  0
+                                  (add1 (sum (sub1 x)))))])
+                sum))
 
 
 ;; (let-values ([(cs ty) (do-type-infer #'(lambda (p)
@@ -126,6 +150,11 @@
        (if #t a
            b)))
    '(-> α (-> α α)))
+
+  (tc (lambda (x) (add1 x))
+      '(-> nat nat))
+  (tc (lambda (x) (zero? x))
+      '(-> nat bool))
 
   (tc 10 'nat)
   (tc #t 'bool)
