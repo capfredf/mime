@@ -85,31 +85,31 @@
 (module+ test
   (require rackunit)
 
-  (define (alpha-eq? t1 t2)
-    (match* (t1 t2)
-      [((? var?) (? var?)) #t]
-      [((? poly-type?) (? poly-type?))
-       (alpha-eq? (poly-type-body t1)
-                  (poly-type-body t2))]
-      [((? arrow?) (? arrow?))
-       (and (alpha-eq? (arrow-arg-type t1)
-                       (arrow-arg-type t2))
-            (alpha-eq? (arrow-ret-type t1)
-                       (arrow-ret-type t2)))]
-      [((struct prim [a]) (struct prim [b]))
-       (and (equal? a b) a b)]))
+  ;; (define (alpha-eq? t1 t2)
+  ;;   (match* (t1 t2)
+  ;;     [((? var?) (? var?)) #t]
+  ;;     [((? poly-type?) (? poly-type?))
+  ;;      (alpha-eq? (poly-type-body t1)
+  ;;                 (poly-type-body t2))]
+  ;;     [((? arrow?) (? arrow?))
+  ;;      (and (alpha-eq? (arrow-arg-type t1)
+  ;;                      (arrow-arg-type t2))
+  ;;           (alpha-eq? (arrow-ret-type t1)
+  ;;                      (arrow-ret-type t2)))]
+  ;;     [((struct prim [a]) (struct prim [b]))
+  ;;      (and (equal? a b) a b)]))
 
-  (define-syntax-rule (tc given expected)
-    (check-equal? (type-infer (syntax given))
-                  expected))
+  ;; (define-syntax-rule (tc given expected)
+  ;;   (check-equal? (type-infer (syntax given))
+  ;;                 expected))
 
-  (define-syntax-rule (tc-match given expected)
-    (check-match (type-infer given)
-                  expected))
+  ;; (define-syntax-rule (tc-match given expected)
+  ;;   (check-match (type-infer given)
+  ;;                 expected))
 
-  (define-syntax-rule (tc-alpha given expected)
-    (check-true (alpha-eq? (type-infer given)
-                           expected)))
+  ;; (define-syntax-rule (tc-alpha given expected)
+  ;;   (check-true (alpha-eq? (type-infer given)
+  ;;                          expected)))
 
   (check-true
    (and (member (type-infer #'(lambda (p)
@@ -151,7 +151,4 @@
                                         d)))))
                 (list '(-> (-> α bool) (-> (⊓ β α) (-> β β)))
                       '(-> (-> α bool) (-> (⊓ α β) (-> β β)))))
-        #t))
-
-  ;; (tc #'(rcd [a 10]) '{[a : nat]})
-)
+        #t)))
