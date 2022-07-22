@@ -152,6 +152,19 @@
            (constrain-state-upperbounds a)))]
     [else null]))
 
+(define (myhash-union [vctbl-a : VarPolarConstrainInfo] [vctbl-b : VarPolarConstrainInfo]) : VarPolarConstrainInfo
+  (for/fold ([acc : VarPolarConstrainInfo vctbl-a])
+            ([(k b) (in-hash vctbl-b)])
+    (cond
+      [(hash-ref acc k #f)
+       => (lambda ([a : ConstrainState])
+            (match-define (constrain-state lvl-a lbs-a ubs-a) a)
+            (match-define (constrain-state lvl-b lbs-b ubs-b) b)
+            (hash-set acc k (make-constrain-state lvl-a
+                                                  (append lbs-a lbs-b)
+                                                  (append ubs-a ubs-b))))]
+      [else (hash-set acc k b)])))
+
 (: constrain (->* [VarPolarConstrainInfo MonoType MonoType]
                   [Cache]
                   VarPolarConstrainInfo))
@@ -171,8 +184,8 @@
         var-ctbl]
        [((struct arrow [p1 r1])
          (struct arrow [p2 r2]))
-        (hash-union (recur p2 p1)
-                    (recur r1 r2))]
+        (myhash-union (recur p2 p1)
+                      (recur r1 r2))]
        [((struct record [fs1])
          (struct record [fs2]))
 

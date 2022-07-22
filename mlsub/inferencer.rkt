@@ -63,7 +63,7 @@
     [(letrec ([x rhs]) body)
      (define rhs-ty (fresh-var! 'letrec))
      (define-values (cs-rhs ty^) (recur #'rhs (extend-env env #'x rhs-ty) (add1 lvl)))
-     (define cs-rhs^ (constrain cs-rhs rhs-ty ty^))
+     (define cs-rhs^ (constrain cs-rhs ty^ rhs-ty))
      (define-values (cs-b ty^^) (recur #'body (extend-env env #'x (poly-type lvl rhs-ty)) #:var-ctbl cs-rhs^))
      (values cs-b ty^^)]
     [(sel rcd name)
@@ -86,13 +86,6 @@
 (define (type-infer term)
   (let-values ([(cs ty) (do-type-infer term (new-env-with-primitives))])
     (uty->sexp (coalesce-type cs ty))))
-
-#;
-(type-infer #'(letrec ([sum (lambda (x)
-                              (if (zero? x)
-                                  0
-                                  (add1 (sum (sub1 x)))))])
-                sum))
 
 
 ;; (let-values ([(cs ty) (do-type-infer #'(lambda (p)
@@ -160,6 +153,12 @@
   (tc #t 'bool)
   (tc (if #t 42 24) 'nat)
 
+  (tc (letrec ([sum (lambda (x)
+                              (if (zero? x)
+                                  0
+                                  (add1 (sum (sub1 x)))))])
+        sum)
+      '(-> nat nat))
 
   ;; (a -> a & b) -> a -> b ∀<=> (a | b -> b) -> a -> b
   (check-true
